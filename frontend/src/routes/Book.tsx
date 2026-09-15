@@ -19,7 +19,7 @@ const STEPS = ['What', 'When & where', 'Who', 'Payment'] as const
 type SelectedLocation = {
   lat: number
   lng: number
-  source: 'device' | 'geocoded'
+  source: 'device' | 'geocoded' | 'provided'
   accuracy?: number
   provider?: string
   attribution?: string
@@ -49,6 +49,11 @@ export function Book() {
   const [customPrice, setCustomPrice] = useState('')
   // The hire capability gate: an email-registered account proves a phone here.
   const [needsPhone, setNeedsPhone] = useState(false)
+  // The third way to locate a gig: typed coordinates, for when GPS is unavailable
+  // and no geocoder is configured (the dev default).
+  const [manualOpen, setManualOpen] = useState(false)
+  const [manualLat, setManualLat] = useState('')
+  const [manualLng, setManualLng] = useState('')
 
   const customAmount = Number.parseFloat(customPrice)
   // Mirrors the backend's Field(gt=0, le=1_000_000), so the button can't submit what the
@@ -94,6 +99,26 @@ export function Book() {
     }
   }, [category, hours, urgency, location, pricing, customValid, customAmount])
 
+  // Manual coordinates apply as soon as both parse inside range, so the estimate
+  // and the button come alive without an extra click. Editing them back to an
+  // invalid pair lifts the pin *only* if the pin came from these inputs.
+  useEffect(() => {
+    if (!manualOpen) return
+    const lat = Number.parseFloat(manualLat)
+    const lng = Number.parseFloat(manualLng)
+    const valid =
+      Number.isFinite(lat) &&
+      Number.isFinite(lng) &&
+      Math.abs(lat) <= 90 &&
+      Math.abs(lng) <= 180
+    if (valid) {
+      setLocation({ lat, lng, source: 'provided' })
+      setLocationResults([])
+    } else {
+      setLocation((current) => (current?.source === 'provided' ? null : current))
+    }
+  }, [manualLat, manualLng, manualOpen])
+
   const canBook = canHire(user)
 
   const searchAddress = async () => {
@@ -111,9 +136,15 @@ export function Book() {
         limit: 5,
       })
       setLocationResults(places)
-      if (places.length === 0) setError('No matching address was found.')
+      if (places.length === 0) {
+        setError('No matching address was found. You can enter coordinates manually below.')
+      }
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : 'Address lookup is unavailable.')
+      setError(
+        err instanceof ApiError
+          ? `${err.detail} You can enter coordinates manually below.`
+          : 'Address lookup is unavailable. You can enter coordinates manually below.',
+      )
     } finally {
       setBusy(false)
     }
@@ -157,7 +188,10 @@ export function Book() {
         setAddress(`${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`)
       }
     } catch {
-      setError('Location was unavailable or permission was not granted.')
+      setError(
+        'Location was unavailable or permission was not granted. You can search the address, ' +
+          'or enter coordinates manually below.',
+      )
     } finally {
       setBusy(false)
     }
@@ -197,7 +231,9 @@ export function Book() {
         location_source: location.source,
         location_accuracy_m: location.accuracy,
         geocoder: location.provider,
-        location_consent: true,
+        // Consent is only meaningful where an external party saw the location: the GPS
+        // or the geocoder. A manually typed pin consents to nothing beyond posting the gig.
+        location_consent: location.source !== 'provided',
         estimated_hours: hours,
         urgency,
         // A poster-set price travels with the gig and is never recomputed afterwards.
@@ -358,6 +394,51 @@ export function Book() {
               Use current
             </button>
           </div>
+
+          {/* The fallback when GPS and the geocoder are both out of reach. */}
+          <button
+            type="button"
+            aria-expanded={manualOpen}
+            onClick={() => setManualOpen((open) => !open)}
+            style={{
+              alignSelf: 'flex-start',
+              background: 'none',
+              border: 'none',
+              color: 'var(--violet)',
+              cursor: 'pointer',
+              fontSize: 13,
+              fontWeight: 600,
+              padding: 0,
+              minHeight: 32,
+            }}
+          >
+            {manualOpen ? 'Hide manual coordinates' : 'No GPS or search result? Enter coordinates manually'}
+          </button>
+          {manualOpen && (
+            <div style={{ display: 'flex', gap: 'var(--s2)' }}>
+              <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+                <label htmlFor="manual-lat">Latitude</label>
+                <input
+                  id="manual-lat"
+                  inputMode="decimal"
+                  placeholder="22.7196"
+                  value={manualLat}
+                  onChange={(e) => setManualLat(e.target.value.replace(/[^0-9.\-]/g, '').slice(0, 10))}
+                />
+              </div>
+              <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+                <label htmlFor="manual-lng">Longitude</label>
+                <input
+                  id="manual-lng"
+                  inputMode="decimal"
+                  placeholder="75.8577"
+                  value={manualLng}
+                  onChange={(e) => setManualLng(e.target.value.replace(/[^0-9.\-]/g, '').slice(0, 11))}
+                />
+              </div>
+            </div>
+          )}
+
           {locationResults.length > 0 && (
             <div role="listbox" aria-label="Address results" style={{ display: 'grid', gap: 6 }}>
               {locationResults.map((place) => (
@@ -372,8 +453,10 @@ export function Book() {
             {location
               ? location.source === 'device'
                 ? `One-time device fix selected${location.accuracy ? ` · ±${Math.round(location.accuracy)} m` : ''}${location.labelAttribution ? ` · label by ${location.labelAttribution}` : ''}. Editing the label does not move it.`
-                : `Using the result you selected from ${location.provider} · ${location.attribution}. Editing the label does not move it.`
-              : 'Typing alone does not assign coordinates. Select a search result or explicitly share current location.'}
+                : location.source === 'geocoded'
+                  ? `Using the result you selected from ${location.provider} · ${location.attribution}. Editing the label does not move it.`
+                  : `Manual coordinates set (${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}) — matching uses exactly these; the label stays what you typed above.`
+              : 'Typing alone does not assign coordinates. Select a search result, share current location, or enter coordinates manually.'}
           </p>
 
           <div className="field">
