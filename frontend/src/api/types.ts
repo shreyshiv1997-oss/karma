@@ -217,6 +217,14 @@ export type OtpSendResponse = {
   dev_otp: string | null
 }
 
+/** One KYC submission, as returned by GET /verification/me (newest first). */
+export type Verification = {
+  id: number
+  document_type: 'aadhaar' | 'pan' | 'govt_id'
+  status: 'pending' | 'approved' | 'rejected'
+  created_at: string
+}
+
 /** --- trust-desk (admin) surfaces ------------------------------------------ */
 
 export type PendingVerification = {
