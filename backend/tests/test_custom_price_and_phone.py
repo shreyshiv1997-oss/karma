@@ -223,6 +223,49 @@ async def test_a_custom_priced_gig_completes_and_pays_out(client, session_factor
     assert summary.json()["lifetime_earned"] == 977.5
 
 
+async def test_summary_counts_only_the_callers_gigs(client, session_factory):
+    """A user with no work of their own sees zeroes, not marketplace totals."""
+    category_id = await add_category(session_factory)
+    customer = await register_user(client, handle="summaryowner")
+    await _grant_hire(client, customer["token"])
+    worker = await make_worker(client, session_factory, handle="summaryworker", category_id=category_id)
+
+    # Drive one gig all the way through escrow to completion.
+    created = await client.post(
+        "/api/v1/gigs",
+        json={**GIG_BODY, "category_id": category_id},
+        headers=auth(customer["token"]),
+    )
+    assert created.status_code == 201, created.text
+    gig_id = created.json()["id"]
+    assigned = await client.post(
+        f"/api/v1/gigs/{gig_id}/assign?worker_id={worker['user_id']}",
+        headers=auth(customer["token"]),
+    )
+    assert assigned.status_code == 200, assigned.text
+    await secure_gig_payment(client, customer, gig_id)
+    for status in ("en_route", "arrived", "in_progress", "completion_pending"):
+        step = await client.post(
+            f"/api/v1/gigs/{gig_id}/status",
+            json={"status": status},
+            headers=auth(worker["token"]),
+        )
+        assert step.status_code == 200, step.text
+    await release_gig_payment(client, customer, gig_id)
+
+    # The bystander: registered, verified, zero gigs of their own.
+    bystander = await register_user(client, handle="bystander")
+    stats = await client.get("/api/v1/gigs/stats/summary", headers=auth(bystander["token"]))
+    assert stats.json()["gigs_total"] == 0, "an empty 'No gigs yet' list cannot sit under totals"
+    assert stats.json()["gigs_completed"] == 0
+
+    # Both parties to the gig count it once — no more, no less.
+    for account in (customer, worker):
+        own = await client.get("/api/v1/gigs/stats/summary", headers=auth(account["token"]))
+        assert own.json()["gigs_total"] == 1
+        assert own.json()["gigs_completed"] == 1
+
+
 # --------------------------------------------------------------------------
 # phone verification after registration
 # --------------------------------------------------------------------------

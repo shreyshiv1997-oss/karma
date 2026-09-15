@@ -21,7 +21,7 @@ from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import cast, func, Numeric, select, update
+from sqlalchemy import cast, func, Numeric, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
@@ -665,11 +665,21 @@ async def gig_reviews(gig_id: int, session: SessionDep, user: CurrentUser) -> li
 
 @router.get("/stats/summary")
 async def summary(session: SessionDep, user: CurrentUser) -> dict:
-    """Headline numbers for the dashboard."""
-    total = await session.scalar(select(func.count()).select_from(Gig)) or 0
+    """Headline numbers for the caller's dashboard.
+
+    Scoped to the account asking. The counters used to be marketplace-wide: a
+    brand-new account would see a dozen "completed" gigs above an empty "No gigs
+    yet" list and a ₹0 wallet, because the wallet fields were already per-user
+    while these two were not. (Platform-wide totals belong to /admin/analytics,
+    which is where they still live.)
+    """
+    mine = or_(Gig.customer_id == user.id, Gig.worker_id == user.id)
+    total = (
+        await session.scalar(select(func.count()).select_from(Gig).where(mine)) or 0
+    )
     completed = (
         await session.scalar(
-            select(func.count()).select_from(Gig).where(Gig.status == "completed")
+            select(func.count()).select_from(Gig).where(mine, Gig.status == "completed")
         )
         or 0
     )
