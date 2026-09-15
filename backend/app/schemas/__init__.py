@@ -101,6 +101,22 @@ class OtpVerifyRequest(BaseModel):
         return normalize_phone(v)
 
 
+class PhoneLinkRequest(BaseModel):
+    """Attach a phone number to the signed-in account, proven by OTP.
+
+    Registration is not the only door anymore: an account created with an email needs a
+    way to earn ``can_hire`` afterwards, and a verified number is what earns it.
+    """
+
+    phone: str = Field(min_length=8, max_length=32)
+    otp: str = Field(min_length=4, max_length=8)
+
+    @field_validator("phone")
+    @classmethod
+    def _norm(cls, v: str) -> str:
+        return normalize_phone(v)
+
+
 class RefreshRequest(BaseModel):
     refresh_token: str
 
@@ -198,6 +214,9 @@ class EstimateRequest(BaseModel):
     urgency: str = Field(default="standard", pattern="^(standard|urgent)$")
     skill_tier: str = Field(default="bronze", pattern="^(bronze|silver|gold)$")
     starts_at: datetime | None = None
+    # When set, the estimate stops being computed from category rates: this is the price
+    # the poster means to offer, and the response only adds the platform fee on top.
+    custom_price: float | None = Field(default=None, gt=0, le=1_000_000)
 
 
 class GigCreate(BaseModel):
@@ -215,6 +234,10 @@ class GigCreate(BaseModel):
     urgency: str = Field(default="standard", pattern="^(standard|urgent)$")
     photos: list[str] = Field(default_factory=list, max_length=8)
     preferred_start_at: datetime | None = None
+    # The poster may name the price of the work themselves (before the platform fee).
+    # When absent, the fare is computed from the category's rates as it always was.
+    # Bounded like any money field so a typo cannot mint an unpayable authorization.
+    custom_price: float | None = Field(default=None, gt=0, le=1_000_000)
 
     @model_validator(mode="after")
     def _location_has_provenance_and_consent(self) -> GigCreate:

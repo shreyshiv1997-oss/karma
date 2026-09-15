@@ -45,7 +45,7 @@ from app.schemas import (
     ReviewCreate,
     ReviewOut,
 )
-from app.services.fare import estimate_fare, split_payout
+from app.services.fare import custom_price_breakdown, estimate_fare, is_custom_priced, split_payout
 from app.services.karma import KarmaLedger
 from app.services.payment_workflows import cancel_gig_authorization, lock_payment
 from app.services.payments import PaymentGateway, get_payment_gateway
@@ -78,6 +78,14 @@ async def estimate(payload: EstimateRequest, session: SessionDep) -> dict:
     category = await session.get(ServiceCategory, payload.category_id)
     if category is None:
         raise HTTPException(status_code=404, detail="Category not found")
+
+    # A poster who names their own price gets the platform fee on top of exactly that
+    # number -- the same contract POST /gigs will honour when it stores the gig.
+    if payload.custom_price is not None:
+        return custom_price_breakdown(
+            custom_price=payload.custom_price,
+            platform_fee_rate=settings.PLATFORM_FEE_RATE,
+        )
 
     return estimate_fare(
         base_fare=float(category.base_fare),
@@ -114,18 +122,28 @@ async def create_gig(
         purposes={"gig"},
     )
 
-    breakdown = estimate_fare(
-        base_fare=float(category.base_fare),
-        per_km_rate=float(category.per_km_rate),
-        per_hour_rate=float(category.per_hour_rate),
-        distance_km=0.0,
-        estimated_hours=payload.estimated_hours,
-        platform_fee_rate=settings.PLATFORM_FEE_RATE,
-        urgency=payload.urgency,
-        category_urgency_multiplier=float(category.urgency_multiplier),
-        category_night_multiplier=float(category.night_multiplier),
-        starts_at=payload.preferred_start_at,
-    )
+    # The poster names the price or lets the marketplace compute one. A poster-set price
+    # is stored verbatim (fee on top) and, unlike an estimated one, is never recomputed
+    # at assignment -- the worker's tier and distance cannot re-price a number the
+    # customer already agreed with themselves.
+    if payload.custom_price is not None:
+        breakdown = custom_price_breakdown(
+            custom_price=payload.custom_price,
+            platform_fee_rate=settings.PLATFORM_FEE_RATE,
+        )
+    else:
+        breakdown = estimate_fare(
+            base_fare=float(category.base_fare),
+            per_km_rate=float(category.per_km_rate),
+            per_hour_rate=float(category.per_hour_rate),
+            distance_km=0.0,
+            estimated_hours=payload.estimated_hours,
+            platform_fee_rate=settings.PLATFORM_FEE_RATE,
+            urgency=payload.urgency,
+            category_urgency_multiplier=float(category.urgency_multiplier),
+            category_night_multiplier=float(category.night_multiplier),
+            starts_at=payload.preferred_start_at,
+        )
 
     gig = Gig(
         customer_id=user.id,
@@ -219,29 +237,33 @@ async def assign_worker(
     gig.payment_status = "requires_payment"
     gig.accepted_at = datetime.now(UTC)
 
-    # Recompute the fare now that we know the worker's distance and tier.
-    category = await session.get(ServiceCategory, gig.category_id)
-    from app.core.ports import haversine_km
+    # Recompute the fare now that we know the worker's distance and tier -- unless the
+    # poster set the price themselves. A poster-set price is a promise made at posting
+    # time: recomputing it here would let the worker's tier or a location fix change
+    # what the customer is about to authorize after they have already read the number.
+    if not is_custom_priced(gig.fare_breakdown):
+        category = await session.get(ServiceCategory, gig.category_id)
+        from app.core.ports import haversine_km
 
-    distance = 0.0
-    if worker.lat is not None and worker.lng is not None:
-        distance = haversine_km(gig.lat, gig.lng, worker.lat, worker.lng)
+        distance = 0.0
+        if worker.lat is not None and worker.lng is not None:
+            distance = haversine_km(gig.lat, gig.lng, worker.lat, worker.lng)
 
-    breakdown = estimate_fare(
-        base_fare=float(category.base_fare),
-        per_km_rate=float(category.per_km_rate),
-        per_hour_rate=float(category.per_hour_rate),
-        distance_km=distance,
-        estimated_hours=max(0.25, float(gig.estimated_hours or 2.0)),
-        platform_fee_rate=settings.PLATFORM_FEE_RATE,
-        urgency=gig.urgency,
-        skill_tier=worker.verification_tier,
-        category_urgency_multiplier=float(category.urgency_multiplier),
-        category_night_multiplier=float(category.night_multiplier),
-        starts_at=gig.preferred_start_at,
-    )
-    gig.fare_breakdown = breakdown
-    gig.total = Decimal(str(breakdown["total"]))
+        breakdown = estimate_fare(
+            base_fare=float(category.base_fare),
+            per_km_rate=float(category.per_km_rate),
+            per_hour_rate=float(category.per_hour_rate),
+            distance_km=distance,
+            estimated_hours=max(0.25, float(gig.estimated_hours or 2.0)),
+            platform_fee_rate=settings.PLATFORM_FEE_RATE,
+            urgency=gig.urgency,
+            skill_tier=worker.verification_tier,
+            category_urgency_multiplier=float(category.urgency_multiplier),
+            category_night_multiplier=float(category.night_multiplier),
+            starts_at=gig.preferred_start_at,
+        )
+        gig.fare_breakdown = breakdown
+        gig.total = Decimal(str(breakdown["total"]))
     await session.flush()
 
     queue_event(

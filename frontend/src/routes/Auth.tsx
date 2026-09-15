@@ -1,15 +1,24 @@
 import { useState } from 'react'
 import { useAuth } from '../store/auth'
-import { ApiError } from '../api/client'
+import { ApiError, post } from '../api/client'
+import type { OtpSendResponse } from '../api/types'
 import { KarmaRing } from '../components/KarmaRing'
 
 /**
  * One form, two entry doors (email or phone) — and crucially, no question
  * asking "are you a customer or a worker?". Capabilities are additive and
  * granted later, so the population is never split at the door.
+ *
+ * The phone door has two beats: the backend refuses to register a number nobody
+ * proved, so a phone identifier first sends an OTP and only then creates the
+ * account. Email registrations stay one step.
  */
 
 type Mode = 'login' | 'register'
+
+/** True when the identifier can only be a phone number (mirrors the backend's normaliser). */
+const looksLikePhone = (identifier: string) =>
+  !identifier.includes('@') && identifier.replace(/\D/g, '').length >= 8
 
 export function Auth() {
   const { login, register } = useAuth()
@@ -20,6 +29,18 @@ export function Auth() {
   const [displayName, setDisplayName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Phone registrations: the OTP beat. The dev code is only ever shown in dev builds.
+  const [otpSent, setOtpSent] = useState(false)
+  const [otp, setOtp] = useState('')
+  const [devCode, setDevCode] = useState<string | null>(null)
+
+  const phoneRegistration = mode === 'register' && looksLikePhone(identifier)
+
+  const resetOtp = () => {
+    setOtpSent(false)
+    setOtp('')
+    setDevCode(null)
+  }
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -28,6 +49,23 @@ export function Auth() {
     try {
       if (mode === 'login') {
         await login(identifier.trim(), password)
+      } else if (phoneRegistration) {
+        if (!otpSent) {
+          const sent = await post<OtpSendResponse>('/auth/otp/send', { phone: identifier.trim() })
+          setDevCode(sent.dev_otp)
+          setOtpSent(true)
+        } else {
+          // Proof first, account second: /auth/otp/verify flags the number as proven,
+          // and registration consumes that flag exactly once.
+          await post('/auth/otp/verify', { phone: identifier.trim(), otp: otp.trim() })
+          await register({
+            handle: handle.trim(),
+            display_name: displayName.trim(),
+            phone: identifier.trim(),
+            password,
+            city: 'Indore',
+          })
+        }
       } else {
         await register({
           handle: handle.trim(),
@@ -99,6 +137,7 @@ export function Auth() {
                 onClick={() => {
                   setMode(m)
                   setError(null)
+                  resetOtp()
                 }}
                 style={{
                   flex: 1,
@@ -152,12 +191,38 @@ export function Auth() {
             <input
               id="identifier"
               value={identifier}
-              onChange={(e) => setIdentifier(e.target.value)}
+              onChange={(e) => {
+                setIdentifier(e.target.value)
+                // A new number means the code already sent no longer proves anything.
+                resetOtp()
+              }}
               placeholder="priya  ·  priya@example.com  ·  9876500001"
               required
               autoComplete="username"
             />
           </div>
+
+          {phoneRegistration && otpSent && (
+            <div className="field">
+              <label htmlFor="reg-otp">Code sent to {identifier.trim()}</label>
+              <input
+                id="reg-otp"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="6-digit code"
+                value={otp}
+                onChange={(e) => setOtp(e.target.value)}
+                required
+                minLength={4}
+                maxLength={8}
+              />
+              {devCode && (
+                <p role="note" style={{ fontSize: 12.5, color: 'var(--text-faint)' }}>
+                  Development build — the code is <code className="num">{devCode}</code>.
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="field">
             <label htmlFor="password">Password</label>
@@ -179,7 +244,15 @@ export function Auth() {
           )}
 
           <button type="submit" className="btn btn-primary" disabled={busy} style={{ width: '100%' }}>
-            {busy ? 'Working…' : mode === 'login' ? 'Sign in' : 'Create account'}
+            {busy
+              ? 'Working…'
+              : mode === 'login'
+                ? 'Sign in'
+                : phoneRegistration
+                  ? otpSent
+                    ? 'Verify & create account'
+                    : 'Send verification code'
+                  : 'Create account'}
           </button>
 
           <p style={{ fontSize: 12.5, color: 'var(--text-faint)', textAlign: 'center', lineHeight: 1.5 }}>

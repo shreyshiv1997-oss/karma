@@ -74,6 +74,8 @@ export type FareBreakdown = {
   night_multiplier: number
   platform_fee: number
   total: number
+  /** Present (and 'custom') when the poster set the price themselves; absent on computed estimates. */
+  pricing_mode?: 'custom'
 }
 
 export type GeocodedPlace = {
@@ -207,4 +209,64 @@ export type Stats = {
   gigs_completed: number
   wallet_balance: number
   lifetime_earned: number
+}
+
+export type OtpSendResponse = {
+  message: string
+  /** Only ever populated in development/test builds. */
+  dev_otp: string | null
+}
+
+/** --- trust-desk (admin) surfaces ------------------------------------------ */
+
+export type PendingVerification = {
+  id: number
+  user_id: number
+  display_name: string
+  handle: string
+  document_type: 'aadhaar' | 'pan' | 'govt_id'
+  document_ref: string
+  created_at: string | null
+}
+
+export type AdminDispute = {
+  id: number
+  gig_id: number
+  gig_title: string
+  raised_by: number
+  raised_by_name: string
+  raised_by_handle: string
+  reason: string
+  status: 'open' | 'in_review' | 'resolved' | 'dismissed'
+  created_at: string | null
+}
+
+export type AdminIncident = {
+  id: number
+  raised_by: number
+  raised_by_name: string
+  raised_by_handle: string
+  against_user_id: number | null
+  against_user_name: string | null
+  against_user_handle: string | null
+  gig_id: number | null
+  lat: number | null
+  lng: number | null
+  note: string
+  status: 'open' | 'in_review' | 'resolved' | 'dismissed'
+  created_at: string | null
+}
+
+export type AdminAnalytics = {
+  users: number
+  workers: number
+  gigs: number
+  gigs_completed: number
+  posts: number
+  proof_posts: number
+  proof_posts_from_gigs: number
+  pending_verifications: number
+  open_incidents: number
+  open_disputes: number
+  proof_rate: number
 }

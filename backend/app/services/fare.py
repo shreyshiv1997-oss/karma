@@ -87,6 +87,39 @@ def estimate_fare(
     }
 
 
+def custom_price_breakdown(
+    *, custom_price: float, platform_fee_rate: float
+) -> dict[str, float | str]:
+    """A poster-set price, in exactly the shape ``estimate_fare`` returns.
+
+    The customer names what the work is worth; the platform fee is computed on top of
+    precisely that number, so the arithmetic stays the arithmetic the customer can see.
+    Every multiplier is neutral by definition: a price a person set themselves cannot be
+    surcharged by a worker's tier, the clock, or an urgency flag. ``pricing_mode`` rides
+    inside the JSON breakdown so the rest of the lifecycle (assignment, payment, payout)
+    can tell a poster-set price apart from an estimated one without a schema migration.
+    """
+    subtotal = money(custom_price)
+    fee = money(subtotal * platform_fee_rate)
+    return {
+        "base_fare": subtotal,
+        "distance_fare": 0.0,
+        "time_fare": 0.0,
+        "subtotal": subtotal,
+        "skill_multiplier": 1.0,
+        "urgency_multiplier": 1.0,
+        "night_multiplier": 1.0,
+        "platform_fee": fee,
+        "total": money(subtotal + fee),
+        "pricing_mode": "custom",
+    }
+
+
+def is_custom_priced(breakdown: dict | None) -> bool:
+    """True when a gig's fare carries a price its poster set themselves."""
+    return isinstance(breakdown, dict) and breakdown.get("pricing_mode") == "custom"
+
+
 def split_payout(total: float, platform_fee_rate: float) -> dict[str, float]:
     """Worker payout and platform cut, from an already-agreed total."""
     fee = total * platform_fee_rate

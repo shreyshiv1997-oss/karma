@@ -24,6 +24,8 @@ export function FareBreakdownView({
     { key: 'night', label: 'Night (22:00–06:00)', value: fare.night_multiplier, hint: 'out-of-hours' },
   ].filter((m) => m.value !== 1)
 
+  const custom = fare.pricing_mode === 'custom'
+
   return (
     <div
       style={{
@@ -34,9 +36,16 @@ export function FareBreakdownView({
         fontVariantNumeric: 'tabular-nums',
       }}
     >
-      <Row label="Base fare" value={inr(fare.base_fare)} />
-      <Row label="Distance" value={inr(fare.distance_fare)} />
-      <Row label="Time" value={inr(fare.time_fare)} />
+      {custom ? (
+        /* A price the poster set themselves: one number, and it is never surcharged. */
+        <Row label="Your price" value={inr(fare.subtotal)} strong />
+      ) : (
+        <>
+          <Row label="Base fare" value={inr(fare.base_fare)} />
+          <Row label="Distance" value={inr(fare.distance_fare)} />
+          <Row label="Time" value={inr(fare.time_fare)} />
+        </>
+      )}
 
       {activeMultipliers.map((m) => (
         <Row
@@ -50,8 +59,13 @@ export function FareBreakdownView({
         />
       ))}
 
-      <Separator />
-      <Row label="Subtotal" value={inr(fare.subtotal)} strong />
+      {!custom && (
+        <>
+          <Separator />
+          {/* A poster-set price IS the subtotal; showing it twice would read like a surcharge. */}
+          <Row label="Subtotal" value={inr(fare.subtotal)} strong />
+        </>
+      )}
       <Row label="Platform fee (15%)" value={inr(fare.platform_fee)} muted />
       <Separator />
 

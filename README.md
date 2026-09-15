@@ -216,6 +216,11 @@ out-of-band `admin` capability. It exposes proof-health analytics, masked-docume
 enriched emergency context, and final incident/dispute case transitions. There is deliberately
 no public “become admin” flow.
 
+The React client carries the same trust desk at `#/admin`: a "Trust" tab renders only for
+accounts holding the capability, and exposes the pending-KYC queue with approve/reject and an
+optional reviewer note, dispute and SOS triage with the backend's transition table, and the
+proof-rate analytics — so a web deployment no longer needs curl to run a review.
+
 ### Production path
 
 ```bash
@@ -369,6 +374,8 @@ PYTHONPATH=. python -m pytest -q
 ```
 330 passed, 2 skipped    latest local run (media/location + payments + Bitchat + Redis coverage,
                          plus test_review_fixes.py for the review-round regressions)
+342 passed, 2 skipped    after test_custom_price_and_phone.py: poster-set gig pricing and
+                         the post-registration phone-OTP door to `can_hire`
 ```
 
 The default suite includes API journeys, pricing, geospatial contract checks, security, ETL,
@@ -637,7 +644,23 @@ web: server transport only.
 
 The React PWA/Capacitor client remains available under `frontend/` for existing web
 deployments; all three clients share backend contracts rather than duplicating business
-rules.
+rules. Three marketplace freedoms live here too:
+
+- **Poster-set pricing.** Posting a gig offers "Transparent estimate" *or* "Set my own
+  price". A poster-set number is stored with the platform fee computed on top and marked
+  `pricing_mode: "custom"` in the fare breakdown; assignment recomputes estimated fares
+  from the worker's tier and distance, but a price the poster set themselves is never
+  re-priced. `POST /gigs/estimate` honours the same `custom_price` so what the UI previews
+  is what the gig stores.
+- **The second door to `can_hire`.** Hiring requires a verified contact detail. Accounts
+  that registered with an email are no longer stuck at a 403: the booking flow and the
+  profile's "Hire workers" capability now surface an inline phone-OTP card that exchanges
+  the code through `POST /auth/phone/verify`, binds the proven number to the account, and
+  then grants the capability. The `PHONE_VERIFIED` ledger row records *which* number was
+  proven, and `has_verified_contact` compares it against the account's current number; the
+  endpoint sets a number where there was none but refuses quiet swaps — changing numbers
+  is a support review, and the +5 karma stays a one-time credit.
+- **The trust desk, on the web.** Described with the demo accounts above.
 
 ---
 

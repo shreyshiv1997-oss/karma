@@ -35,6 +35,7 @@ from app.schemas import (
     OtpSendRequest,
     OtpSendResponse,
     OtpVerifyRequest,
+    PhoneLinkRequest,
     RefreshRequest,
     RegisterRequest,
     TokenPair,
@@ -77,6 +78,73 @@ async def verify_otp(payload: OtpVerifyRequest) -> Message:
     if not ok:
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
     return Message(detail="Phone verified")
+
+
+@router.post("/phone/verify", response_model=UserOut)
+async def link_phone(
+    payload: PhoneLinkRequest, user: CurrentUser, session: SessionDep
+) -> UserOut:
+    """Attach an OTP-proven phone number to the signed-in account.
+
+    Registration is one door to a verified contact detail; this is the other, for
+    accounts that entered with an email. The number is proven by the same OTP exchange
+    and then written onto the account, which is what ``has_verified_contact`` -- and
+    therefore ``can_hire`` -- actually reads.
+
+    The OTP's "verified recently" flag is consumed here rather than left standing: a
+    code that linked a number to one account must not also mint a fresh registration
+    with the same number in its 15-minute afterglow.
+    """
+    try:
+        ok = await OtpService(_cache).verify(payload.phone, payload.otp)
+    except RateLimited as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    if not ok:
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+
+    # The column is unique, but a clear conflict beats an IntegrityError on a race.
+    taken = await session.scalar(
+        select(User.id).where(User.phone == payload.phone, User.id != user.id)
+    )
+    if taken is not None:
+        raise HTTPException(
+            status_code=409, detail="That phone number already belongs to another account"
+        )
+
+    # This endpoint sets a number where there was none (an email-door account), and lets
+    # a client retry the SAME number idempotently after a dropped connection. What it
+    # deliberately refuses is swapping one proven number for a different one: the
+    # PHONE_VERIFIED ledger row and any gigs secured against that number prove *that*
+    # number, and a quiet swap would let a freshly-bought SIM inherit them. Changing
+    # numbers is a support review, matching "no endpoint can change users.phone".
+    if user.phone and user.phone != payload.phone:
+        raise HTTPException(
+            status_code=409,
+            detail="This account already has a verified number; changing it needs a support review",
+        )
+
+    user.phone = payload.phone
+    await OtpService(_cache).consume_verification(payload.phone)
+
+    # The +5 is a one-time credit for proving contactability at all -- keyed on the
+    # person, like the KYC credit, not on how many numbers an account has attached.
+    credited_before = await session.scalar(
+        select(KarmaEvent.id)
+        .where(
+            KarmaEvent.user_id == user.id,
+            KarmaEvent.event_type == KarmaEventType.PHONE_VERIFIED.value,
+        )
+        .limit(1)
+    )
+    if credited_before is None:
+        await KarmaLedger(session).record(
+            user.id,
+            KarmaEventType.PHONE_VERIFIED,
+            reason="Phone number verified",
+            meta={"phone": user.phone},
+        )
+    await session.flush()
+    return UserOut.model_validate(user)
 
 
 @router.post("/register", response_model=AuthResponse, status_code=201)
@@ -330,8 +398,10 @@ async def has_verified_contact(session, user: User) -> bool:
     Two ways to satisfy it, both evidenced by durable state rather than by the caller
     saying so:
 
-      * a phone number that completed the OTP flow -- registration appends a
-        ``PHONE_VERIFIED`` ledger row when, and only when, the OTP was consumed; or
+      * the phone number *currently on the account* completed the OTP flow -- the ledger
+        row records which number was proven, and it must be this one. A number proven
+        once is not proof of whatever replaced it, and ``POST /auth/phone/verify`` is
+        precisely the change-number flow this comparison exists for; or
       * an approved KYC submission, which is strictly stronger.
     """
     if user.phone:
@@ -339,6 +409,7 @@ async def has_verified_contact(session, user: User) -> bool:
             select(KarmaEvent.id).where(
                 KarmaEvent.user_id == user.id,
                 KarmaEvent.event_type == KarmaEventType.PHONE_VERIFIED.value,
+                KarmaEvent.meta["phone"].as_string() == user.phone,
             )
         )
         if verified_phone is not None:

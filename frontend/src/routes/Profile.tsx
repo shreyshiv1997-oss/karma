@@ -3,6 +3,7 @@ import { ApiError, get, patch, post } from '../api/client'
 import type { Category, WorkerProfile as WorkerProfileType } from '../api/types'
 import { KarmaRing } from '../components/KarmaRing'
 import { TierBadge } from '../components/MatchCard'
+import { PhoneVerify } from '../components/PhoneVerify'
 import { useAuth } from '../store/auth'
 
 /**
@@ -21,6 +22,8 @@ export function Profile() {
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [available, setAvailable] = useState(false)
+  // Set when the capability grant asks for a verified contact detail.
+  const [needsPhone, setNeedsPhone] = useState(false)
 
   const isWorker = !!user?.capabilities?.includes('can_work')
 
@@ -51,9 +54,15 @@ export function Profile() {
     try {
       await grant('can_hire')
       await refreshUser()
+      setNeedsPhone(false)
       flash('You can now post gigs.')
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : 'Something went wrong.')
+      if (err instanceof ApiError && err.status === 403) {
+        // The grant exists but needs a proven contact detail first; offer the OTP door.
+        setNeedsPhone(true)
+      } else {
+        setError(err instanceof ApiError ? err.detail : 'Something went wrong.')
+      }
     } finally {
       setBusy(false)
     }
@@ -166,6 +175,14 @@ export function Profile() {
             action={isWorker ? undefined : <span style={{ fontSize: 12.5, color: 'var(--text-faint)' }}>Needs KYC</span>}
           />
         </ul>
+
+        {/* The verified-contact requirement, met inline instead of as a dead-end error. */}
+        {needsPhone && !user.capabilities.includes('can_hire') && (
+          <PhoneVerify
+            reason="Hiring summons a verified worker to your address — confirm your phone number to enable it."
+            onVerified={optIntoHiring}
+          />
+        )}
       </section>
 
       {/* The worker dashboard. */}

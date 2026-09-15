@@ -3,6 +3,7 @@ import { ApiError, get, post } from '../api/client'
 import type { Candidate, Category, FareBreakdown, GeocodedPlace, Gig } from '../api/types'
 import { MatchCard } from '../components/MatchCard'
 import { FareBreakdownView } from '../components/FareBreakdown'
+import { PhoneVerify } from '../components/PhoneVerify'
 import { useAuth, canHire } from '../store/auth'
 
 /**
@@ -43,6 +44,20 @@ export function Book() {
   const [bookedWith, setBookedWith] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // Pricing: the transparent estimate, or the poster's own number (fee on top).
+  const [pricing, setPricing] = useState<'estimate' | 'custom'>('estimate')
+  const [customPrice, setCustomPrice] = useState('')
+  // The hire capability gate: an email-registered account proves a phone here.
+  const [needsPhone, setNeedsPhone] = useState(false)
+
+  const customAmount = Number.parseFloat(customPrice)
+  // Mirrors the backend's Field(gt=0, le=1_000_000), so the button can't submit what the
+  // API is guaranteed to refuse.
+  const customValid =
+    pricing === 'custom' &&
+    Number.isFinite(customAmount) &&
+    customAmount > 0 &&
+    customAmount <= 1_000_000
 
   useEffect(() => {
     get<Category[]>('/categories').then(setCategories).catch(() => undefined)
@@ -54,6 +69,11 @@ export function Book() {
       setFare(null)
       return
     }
+    if (pricing === 'custom' && !customValid) {
+      // A half-typed price must not flash a stale computed estimate.
+      setFare(null)
+      return
+    }
     let cancelled = false
     post<FareBreakdown>('/gigs/estimate', {
       category_id: category.id,
@@ -61,13 +81,18 @@ export function Book() {
       lng: location.lng,
       estimated_hours: hours,
       urgency,
+      ...(customValid ? { custom_price: customAmount } : {}),
     })
       .then((data) => !cancelled && setFare(data))
-      .catch(() => undefined)
+      .catch(() => {
+        // A failed estimate must not leave the *previous* inputs' breakdown on screen —
+        // a stale card would confidently price a different job than the one shown.
+        if (!cancelled) setFare(null)
+      })
     return () => {
       cancelled = true
     }
-  }, [category, hours, urgency, location])
+  }, [category, hours, urgency, location, pricing, customValid, customAmount])
 
   const canBook = canHire(user)
 
@@ -175,13 +200,21 @@ export function Book() {
         location_consent: true,
         estimated_hours: hours,
         urgency,
+        // A poster-set price travels with the gig and is never recomputed afterwards.
+        ...(customValid ? { custom_price: customAmount } : {}),
       })
       setGig(created)
       const found = await post<Candidate[]>('/matching/find', { gig_id: created.id })
       setMatches(found)
       setStep(2)
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : 'Could not post the gig.')
+      if (err instanceof ApiError && err.status === 403 && !canBook) {
+        // The only refusal before a gig exists is the verified-contact rule: hiring
+        // summons a stranger to an address, so the account proves a phone first.
+        setNeedsPhone(true)
+      } else {
+        setError(err instanceof ApiError ? err.detail : 'Could not post the gig.')
+      }
     } finally {
       setBusy(false)
     }
@@ -385,19 +418,98 @@ export function Book() {
             </div>
           </fieldset>
 
+          {/* Who sets the price: the fare engine, or the poster. */}
+          <fieldset style={{ border: 'none', padding: 0 }}>
+            <legend style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 'var(--s2)' }}>
+              Pricing
+            </legend>
+            <div style={{ display: 'flex', gap: 'var(--s2)' }}>
+              {(
+                [
+                  { id: 'estimate', label: 'Transparent estimate' },
+                  { id: 'custom', label: 'Set my own price' },
+                ] as const
+              ).map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  aria-pressed={pricing === option.id}
+                  onClick={() => setPricing(option.id)}
+                  className="btn"
+                  style={{
+                    flex: 1,
+                    background: pricing === option.id ? 'var(--ink)' : 'var(--surface)',
+                    color: pricing === option.id ? '#fff' : 'var(--text)',
+                    border: `1px solid ${pricing === option.id ? 'var(--ink)' : 'var(--line-strong)'}`,
+                  }}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            {pricing === 'custom' && (
+              <div className="field" style={{ marginTop: 'var(--s3)' }}>
+                <label htmlFor="custom-price">Your price for the work (₹)</label>
+                <input
+                  id="custom-price"
+                  inputMode="decimal"
+                  placeholder="e.g. 1500"
+                  value={customPrice}
+                  onChange={(e) =>
+                    // One decimal point, paise to two places, and never beyond the backend's cap.
+                    setCustomPrice(
+                      e.target.value
+                        .replace(/[^0-9.]/g, '')
+                        .replace(/(\..*)\./g, '$1')
+                        .replace(/^(\d{0,7})(\.\d{0,2})?.*$/, '$1$2'),
+                    )
+                  }
+                />
+                {customAmount > 1_000_000 ? (
+                  <p role="alert" style={{ fontSize: 12.5, color: 'var(--rose)', lineHeight: 1.5 }}>
+                    Prices are capped at ₹10,00,000 per gig.
+                  </p>
+                ) : (
+                  <p style={{ fontSize: 12.5, color: 'var(--text-faint)', lineHeight: 1.5 }}>
+                    You name what the work is worth — no multipliers apply. The 15% platform fee
+                    is added on top and shown before you post.
+                  </p>
+                )}
+              </div>
+            )}
+          </fieldset>
+
           {/* Live, transparent pricing. */}
           {fare && (
             <div style={{ padding: 'var(--s4)', background: 'var(--surface-2)', borderRadius: 'var(--r-input)' }}>
               <h2 style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 'var(--s3)' }}>
-                Estimated price
+                {pricing === 'custom' ? 'Your price · all-in' : 'Estimated price'}
               </h2>
               <FareBreakdownView fare={fare} />
             </div>
           )}
 
+          {/* A verified phone is what unlocks hiring; prove it without leaving the flow. */}
+          {needsPhone && (
+            <PhoneVerify
+              reason="Posting a gig summons a verified worker to your address — confirm your phone number first."
+              onVerified={async () => {
+                await refreshUser()
+                setNeedsPhone(false)
+                await createGig()
+              }}
+            />
+          )}
+
           <div style={{ display: 'flex', gap: 'var(--s2)' }}>
             <button type="button" className="btn btn-ghost" onClick={() => setStep(0)}>Back</button>
-            <button type="button" className="btn btn-primary" style={{ flex: 1 }} onClick={createGig} disabled={busy || !location}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{ flex: 1 }}
+              onClick={createGig}
+              disabled={busy || !location || (pricing === 'custom' && !customValid)}
+            >
               {busy ? 'Finding workers…' : 'Find workers'}
             </button>
           </div>

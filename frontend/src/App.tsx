@@ -9,6 +9,7 @@ import { Book } from './routes/Book'
 import { Gigs } from './routes/Gigs'
 import { Karma } from './routes/Karma'
 import { Profile } from './routes/Profile'
+import { Admin } from './routes/Admin'
 
 /**
  * The app shell: a mobile-first single column that becomes a two-pane layout
@@ -18,7 +19,7 @@ import { Profile } from './routes/Profile'
  * from its own audit trail.
  */
 
-type Route = 'feed' | 'book' | 'gigs' | 'karma' | 'profile'
+type Route = 'feed' | 'book' | 'gigs' | 'karma' | 'profile' | 'admin'
 
 const NAV: { id: Route; label: string; glyph: string }[] = [
   { id: 'feed', label: 'Home', glyph: '⌂' },
@@ -28,14 +29,25 @@ const NAV: { id: Route; label: string; glyph: string }[] = [
   { id: 'profile', label: 'You', glyph: '◉' },
 ]
 
-function currentRoute(): Route {
+// The trust desk joins the bar only for accounts the backend would let through anyway.
+const ADMIN_NAV: { id: Route; label: string; glyph: string } = {
+  id: 'admin',
+  label: 'Trust',
+  glyph: '▣',
+}
+
+function navFor(user: { capabilities: string[] } | null) {
+  return user?.capabilities.includes('admin') ? [...NAV, ADMIN_NAV] : NAV
+}
+
+function currentRoute(user: { capabilities: string[] } | null): Route {
   const hash = window.location.hash.replace(/^#\/?/, '').split('?')[0]
-  return (NAV.find((n) => n.id === hash)?.id ?? 'feed') as Route
+  return (navFor(user).find((n) => n.id === hash)?.id ?? 'feed') as Route
 }
 
 export function App() {
   const { user, ready, load, logout } = useAuth()
-  const [route, setRoute] = useState<Route>(currentRoute)
+  const [route, setRoute] = useState<Route>(() => currentRoute(null))
 
   useEffect(() => {
     void load()
@@ -46,10 +58,16 @@ export function App() {
   }, [load])
 
   useEffect(() => {
-    const onHash = () => setRoute(currentRoute())
+    const onHash = () => setRoute(currentRoute(user))
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
-  }, [])
+  }, [user])
+
+  // The first route resolves before /me returns: re-resolve once the user is known, or an
+  // admin who reloaded on #/admin would be parked on the feed while their tab exists.
+  useEffect(() => {
+    setRoute(currentRoute(user))
+  }, [user])
 
   // Hold the native splash until the first real paint, then let it go.
   useEffect(() => {
@@ -175,6 +193,7 @@ export function App() {
         {route === 'gigs' && <Gigs />}
         {route === 'karma' && <Karma />}
         {route === 'profile' && <Profile />}
+        {route === 'admin' && <Admin />}
       </main>
 
       {/* ── Bottom navigation. The ✚ is the dual-intent surface: ──
@@ -205,7 +224,7 @@ export function App() {
             marginInline: 'auto',
           }}
         >
-          {NAV.map((item) => {
+          {navFor(user).map((item) => {
             const isActive = route === item.id
             const isCreate = item.id === 'book'
             return (
