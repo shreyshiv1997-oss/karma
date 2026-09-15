@@ -1,0 +1,29 @@
+fastapi>=0.115,<0.117
+uvicorn[standard]>=0.32
+SQLAlchemy[asyncio]>=2.0.36
+aiosqlite>=0.20
+asyncpg>=0.30
+# Shared rate limits, single-use tickets and cross-worker WebSocket fanout.
+redis==8.1.0
+# The night-fare window is judged in a named IANA zone; slim images ship no system tzdata,
+# and app.core.config refuses to boot without a resolvable FARE_TIMEZONE.
+tzdata>=2024.2
+alembic>=1.14
+pydantic>=2.10
+pydantic-settings>=2.6
+python-jose[cryptography]>=3.3
+# Directly verifies Bitchat Ed25519 device/prekey/envelope signatures.
+cryptography>=44.0
+# PaymentIntents, manual capture, refunds and signed webhook verification.
+stripe==15.6.1
+# Production media objects use the configured provider through the S3 API.
+boto3>=1.35,<2
+argon2-cffi>=25.1.0
+passlib[bcrypt]>=1.7.4
+bcrypt==4.0.1
+python-multipart>=0.0.19
+email-validator>=2.2
+pytest>=8.3
+pytest-asyncio>=0.25
+pytest-cov>=6.0
+httpx>=0.28

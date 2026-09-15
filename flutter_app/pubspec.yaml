@@ -1,0 +1,33 @@
+name: karma_app
+description: Trust-first work marketplace and social proof, built with Flutter.
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  # universal_ble's bidirectional peripheral API requires current Dart.
+  sdk: '>=3.11.4 <4.0.0'
+
+flutter:
+  uses-material-design: true
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cached_network_image: ^3.4.1
+  cryptography: ^2.9.0
+  cryptography_flutter: ^2.3.4
+  flutter_secure_storage: ^9.2.4
+  flutter_stripe: ^14.0.0
+  geolocator: ^14.0.3
+  http: ^1.4.0
+  image_picker: ^1.2.3
+  intl: ^0.20.2
+  provider: ^6.1.5
+  shared_preferences: ^2.5.3
+  universal_ble: 2.0.1
+  web_socket_channel: ^3.0.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0

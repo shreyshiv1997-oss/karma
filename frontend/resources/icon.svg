@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- KARMA app icon: the Karma Ring.
+
+       The ring is the product's thesis rendered as a mark — reputation earned, not awarded.
+       It sweeps rose -> amber -> lime -> gold, the same gradient the in-app KarmaRing walks as
+       a user's karma climbs. Ink ground, because the design manifesto says chrome is calm and
+       only earned things get to be loud.
+
+       Rendered at 512 and downscaled: no text, no hairlines, so it stays legible at 48dp. -->
+  <defs>
+    <linearGradient id="sweep" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#BE123C"/>
+      <stop offset="34%"  stop-color="#B45309"/>
+      <stop offset="68%"  stop-color="#4D7C0F"/>
+      <stop offset="100%" stop-color="#D4A017"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="#0B0B0F"/>
+
+  <!-- Track: the unearned remainder. -->
+  <circle cx="256" cy="256" r="150" fill="none" stroke="#26262E" stroke-width="44"/>
+
+  <!-- Earned arc: 300 degrees of 360, i.e. karma 83. Rotated so the gap sits at the bottom. -->
+  <circle cx="256" cy="256" r="150" fill="none" stroke="url(#sweep)" stroke-width="44"
+          stroke-linecap="round"
+          stroke-dasharray="785.4 1000"
+          transform="rotate(120 256 256)"/>
+
+  <!-- The numeral. Tabular, geometric, centred — the number IS the identity. -->
+  <text x="256" y="256" text-anchor="middle" dominant-baseline="central"
+        font-family="'Space Grotesk','Inter',system-ui,sans-serif"
+        font-size="126" font-weight="700" letter-spacing="-4"
+        fill="#FAFAF8">83</text>
+</svg>

@@ -1,0 +1,17 @@
+{
+  "name": "KARMA — trusted work, proven in public",
+  "short_name": "KARMA",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#0B0B0F",
+  "theme_color": "#0B0B0F",
+  "description": "Hire trusted professionals, prove useful work, and audit every Karma point.",
+  "orientation": "portrait-primary",
+  "prefer_related_applications": false,
+  "icons": [
+    {"src":"icons/Icon-192.png","sizes":"192x192","type":"image/png"},
+    {"src":"icons/Icon-512.png","sizes":"512x512","type":"image/png"},
+    {"src":"icons/Icon-maskable-192.png","sizes":"192x192","type":"image/png","purpose":"maskable"},
+    {"src":"icons/Icon-maskable-512.png","sizes":"512x512","type":"image/png","purpose":"maskable"}
+  ]
+}

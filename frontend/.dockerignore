@@ -1,0 +1,14 @@
+# Without this, `docker compose build ./frontend` uploads the 75 MB node_modules tree to the
+# daemon, where the image immediately throws it away -- the build stage runs its own `npm ci`.
+# Worse, host-built native modules would be copied into a Linux container if the paths ever
+# overlapped.
+node_modules/
+dist/
+.vite/
+
+*.tsbuildinfo
+npm-debug.log*
+
+.git/
+.gitignore
+*.md

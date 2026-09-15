@@ -1,0 +1,308 @@
+/* ============================================================
+   KARMA design tokens
+   Sovereign Calm: the interface is calm, the proof is loud.
+   Every colour pair clears WCAG 2.1 AA (4.5:1 body, 3:1 UI).
+   ============================================================ */
+
+:root {
+  /* --- surfaces ---------------------------------------------------- */
+  --ink: #0b0b0f;
+  --paper: #fafaf8;
+  --surface: #ffffff;
+  --surface-2: #f4f3f0;
+  --line: #e4e2dd;
+  --line-strong: #cfccc4;
+
+  /* --- text -------------------------------------------------------- */
+  --text: #0b0b0f;
+  --text-muted: #5f5c55; /* 4.9:1 on paper */
+  --text-faint: #7d7a72; /* 3.4:1 -- large text / decorative only */
+
+  /* --- brand ------------------------------------------------------- */
+  --violet: #7c3aed; /* primary action only; 5.9:1 on white */
+  --violet-ink: #5b21b6;
+  --karma-gold: #b45309; /* reputation, verification, trust; 4.6:1 on white */
+  --cyan: #0e7490; /* live / realtime; 5.0:1 on white */
+  --lime: #4d7c0f; /* success, completion, availability; 4.6:1 on white */
+  --rose: #be123c; /* danger, SOS, disputes; 6.1:1 on white */
+
+  /* --- karma gradient stops ---------------------------------------- */
+  --karma-dormant: #be123c;
+  --karma-building: #b45309;
+  --karma-trusted: #4d7c0f;
+  --karma-proven: #92400e;
+
+  /* --- space: 8px grid --------------------------------------------- */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+  --s8: 64px;
+
+  /* --- radii: only these three, never in between -------------------- */
+  --r-input: 8px;
+  --r-card: 16px;
+  --r-pill: 999px;
+
+  /* --- type -------------------------------------------------------- */
+  --font-display: "Space Grotesk", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* --- motion: fast-out, gentle-settle. Nothing exceeds 320ms. ------ */
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --d-state: 120ms;
+  --d-enter: 220ms;
+  --d-celebrate: 320ms;
+
+  /* --- depth: no shadows, a 1px border plus a hairline wash --------- */
+  --wash: 0 1px 2px rgba(11, 11, 15, 0.04);
+
+  /* --- layout ------------------------------------------------------ */
+  --nav-h: 60px;
+  --max-w: 680px;
+  --tap: 44px; /* minimum touch target */
+}
+
+/* ============================================================
+   Reset & base
+   ============================================================ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--paper);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* Prevents layout shift from the mobile browser chrome. */
+  min-height: 100dvh;
+}
+
+img,
+svg,
+video {
+  display: block;
+  max-width: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* Numerals never jitter when a value changes -- non-negotiable for a marketplace. */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* ============================================================
+   Accessibility: focus is never removed, only restyled
+   ============================================================ */
+:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Screen-reader-only text that still carries meaning. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px
+  ;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ============================================================
+   Motion: collapse under reduced-motion, never remove meaning
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ============================================================
+   Primitives
+   ============================================================ */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  box-shadow: var(--wash);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+  min-height: var(--tap);
+  padding: 10px 18px;
+  border-radius: var(--r-input);
+  border: 1px solid transparent;
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+  transition:
+    transform var(--d-state) var(--ease),
+    background-color var(--d-state) var(--ease),
+    border-color var(--d-state) var(--ease);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--violet);
+  color: #fff;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--violet-ink);
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.btn-danger {
+  background: var(--rose);
+  color: #fff;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.field label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.field input,
+.field select,
+.field textarea {
+  min-height: var(--tap);
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-input);
+  background: var(--surface);
+  transition: border-color var(--d-state) var(--ease);
+}
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  border-color: var(--violet);
+}
+
+/* A pill: the karma chip, tier badges, status labels. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border: 1px solid currentColor;
+}
+
+.tier-gold {
+  color: var(--karma-gold);
+  background: #fff8ed;
+}
+.tier-silver {
+  color: #475569;
+  background: #f1f5f9;
+}
+.tier-bronze {
+  color: #7c5c3d;
+  background: #fbf3ea;
+}
+
+/* Skeleton: a single 1.4s shimmer that stops after 3 cycles rather than
+   strobing indefinitely on a slow connection. */
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 25%, #eceae5 50%, var(--surface-2) 75%);
+  background-size: 200% 100%;
+  border-radius: var(--r-input);
+  animation: shimmer 1.4s var(--ease) 3 both;
+}
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes float-up {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(0.9);
+  }
+  25% {
+    opacity: 1;
+    transform: translateY(-6px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-24px) scale(1);
+  }
+}

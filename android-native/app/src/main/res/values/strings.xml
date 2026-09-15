@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">KARMA</string>
+    <string name="nav_feed">Home</string>
+    <string name="nav_gigs">Gigs</string>
+    <string name="nav_karma">Karma</string>
+    <string name="sign_out">Sign out</string>
+    <string name="login_title">KARMA</string>
+    <string name="login_tagline">Thou art the work you do.</string>
+    <string name="hint_identifier">handle or email</string>
+    <string name="hint_password">password</string>
+    <string name="login_button">Sign in</string>
+</resources>

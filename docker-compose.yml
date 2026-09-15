@@ -1,0 +1,117 @@
+services:
+  db:
+    image: postgis/postgis:17-3.5
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-karma}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-karma}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-karma} -d ${POSTGRES_DB:-karma}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  storage:
+    # MinIO Community is archived and no longer receives security fixes. SeaweedFS remains an
+    # actively maintained S3-compatible backend; the API itself only depends on the S3 contract.
+    image: chrislusf/seaweedfs:4.40
+    command: mini -ip=storage -dir=/data -webdav=false -admin.ui=false -s3.port.iceberg=0
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:?Set S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?Set S3_SECRET_KEY}
+      S3_BUCKET: karma-media
+    volumes:
+      - object_storage_data:/data
+    restart: unless-stopped
+
+  api:
+    build: ./backend
+    environment:
+      ENVIRONMENT: production
+      # Uvicorn forks independent API workers; Redis Pub/Sub bridges their socket hubs.
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+      # The app refuses to boot in production with a default secret or wildcard origins,
+      # so these must be real values -- the guard is in core/config.py.
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY to at least 32 random characters}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-karma}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-karma}
+      REDIS_URL: redis://redis:6379/0
+      # Pub/Sub is not scoped by Redis database number; namespace this deployment explicitly.
+      REALTIME_REDIS_CHANNEL: ${REALTIME_REDIS_CHANNEL:-karma:production:realtime:v1}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?Set ALLOWED_ORIGINS, e.g. ["https://karma.example.com"]}
+      TRUSTED_HOSTS: ${TRUSTED_HOSTS:?Set TRUSTED_HOSTS, e.g. ["karma.example.com","api"]}
+      OBJECT_STORAGE_BACKEND: s3
+      S3_ENDPOINT: http://storage:8333
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?Set S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?Set S3_SECRET_KEY}
+      S3_BUCKET: karma-media
+      S3_REGION: ${S3_REGION:-us-east-1}
+      # Every address/coordinate lookup requires explicit client consent. This contact-bearing
+      # agent is also required by OpenStreetMap Nominatim's usage policy.
+      GEOCODING_PROVIDER: nominatim
+      GEOCODING_BASE_URL: ${GEOCODING_BASE_URL:-https://nominatim.openstreetmap.org}
+      GEOCODING_USER_AGENT: ${GEOCODING_USER_AGENT:?Set an app/contact agent, e.g. KARMA/1.0 ops@example.com}
+      GEOCODING_COUNTRY_CODES: ${GEOCODING_COUNTRY_CODES:-in}
+      PLATFORM_FEE_RATE: ${PLATFORM_FEE_RATE:-0.15}
+      # The other pricing clock: the night-fare window (22:00-06:00) is judged in this zone,
+      # never in whatever offset a client happened to serialise its start time with.
+      FARE_TIMEZONE: ${FARE_TIMEZONE:-Asia/Kolkata}
+      PAYMENT_PROVIDER: stripe
+      PAYMENT_CURRENCY: INR
+      # Publishable keys are safe to return to PaymentSheet; secret and webhook keys never
+      # leave this container. Production settings reject missing/non-Stripe configuration.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:?Set the Stripe sk_live_ or sk_test_ key}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:?Set the matching Stripe pk_live_ or pk_test_ key}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:?Set the Stripe whsec_ signing secret}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # The API verifies the bucket at startup and restarts until the S3 endpoint is ready.
+      storage:
+        condition: service_started
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+  web:
+    build: ./frontend
+    ports:
+      # The only published port in the stack. The API is reached through this container's
+      # reverse proxy (see frontend/nginx.conf), so it stays on the internal network -- which
+      # is what makes the frontend's same-origin `/api/v1` calls work without CORS.
+      - "${WEB_PORT:-8080}:8080"
+    depends_on:
+      - api
+    restart: unless-stopped
+    # Deliberately NOT `read_only: true`, unlike the api service. nginx writes its pid file to
+    # /var/run and its cache to /var/cache/nginx, and the pid path is a main-context directive
+    # that cannot be redirected from the server-block config in frontend/nginx.conf. Making
+    # this read-only needs an overridden main nginx.conf plus tmpfs mounts, and there is no
+    # Docker daemon in the environment this was written in to prove that combination starts.
+    # Unverified hardening that stops the container booting is worse than none.
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  postgres_data:
+  redis_data:
+  object_storage_data:

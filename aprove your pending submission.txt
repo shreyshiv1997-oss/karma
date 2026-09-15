@@ -1,0 +1,13 @@
+# get a token
+TOKEN=$(curl -s -X POST localhost:8000/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"identifier":"khiladi2461997","password":"<your password>"}' \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["access_token"])')
+
+# find your pending submission id
+curl -s localhost:8000/api/v1/admin/verifications -H "Authorization: Bearer $TOKEN"
+
+# approve it (replace 1 with the id you saw)
+curl -s -X PATCH localhost:8000/api/v1/admin/verifications/1 \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"decision":"approved"}'

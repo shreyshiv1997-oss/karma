@@ -1,0 +1,15 @@
+{
+  "name": "karma-postgis-integration-harness",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Disposable PostgreSQL/PostGIS runtime for KARMA's opt-in integration test",
+  "type": "module",
+  "scripts": {
+    "test": "node run-test.mjs"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "0.5.8",
+    "@electric-sql/pglite-postgis": "0.2.8",
+    "@electric-sql/pglite-socket": "0.2.11"
+  }
+}

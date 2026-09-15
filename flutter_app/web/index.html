@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="KARMA — trusted work, proven in public.">
+  <meta name="theme-color" content="#0B0B0F">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="KARMA">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="manifest" href="manifest.json">
+  <title>KARMA</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; background: #0B0B0F; }
+    #launch { position: fixed; inset: 0; display: grid; place-items: center; color: white;
+      font: 800 22px/1 system-ui, sans-serif; letter-spacing: .16em; }
+    #launch::before { content: ''; position: absolute; width: 66px; height: 66px;
+      border-radius: 50%; border: 6px solid #25252b; border-top-color: #7C3AED;
+      animation: spin .9s linear infinite; }
+    #launch span { transform: translateY(58px); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { #launch::before { animation: none; } }
+  </style>
+</head>
+<body>
+  <div id="launch"><span>KARMA</span></div>
+  <script>
+    window.addEventListener('flutter-first-frame', function () {
+      document.getElementById('launch')?.remove();
+    });
+  </script>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

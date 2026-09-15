@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Karma Ring as the launcher mark: a gold donut on the ink background.
+     108dp adaptive-icon canvas; the ring sits inside the 66dp safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#D4A017"
+        android:fillType="evenOdd"
+        android:pathData="M54,26
+            a28,28 0 1,0 0.001,0 z
+            M54,36
+            a18,18 0 1,1 -0.001,0 z" />
+</vector>

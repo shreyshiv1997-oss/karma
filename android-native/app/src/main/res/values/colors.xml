@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The Sovereign Calm tokens, mirrored from frontend/src/theme/tokens.css. -->
+    <color name="ink">#0B0B0F</color>
+    <color name="paper">#FAFAF8</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="violet">#7C3AED</color>
+    <color name="gold">#B45309</color>
+    <color name="lime">#4D7C0F</color>
+    <color name="rose">#BE123C</color>
+    <color name="text_main">#141419</color>
+    <color name="text_muted">#55555E</color>
+    <color name="line">#E4E4E0</color>
+</resources>

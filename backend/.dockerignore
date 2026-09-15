@@ -1,0 +1,25 @@
+# Without this, `docker compose build ./backend` uploads the 141 MB virtualenv to the daemon
+# on every build -- including the host-platform binaries in it, which are useless inside a
+# Linux container and would shadow the image's own install if the paths ever collided.
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# The dev database and the fixtures that fill it. A production image must not carry demo
+# accounts with known passwords.
+karma.db
+*.db
+*.sqlite3
+
+# Tests are not part of the runtime image.
+tests/
+
+.git/
+.gitignore
+*.md

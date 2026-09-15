@@ -1,0 +1,11 @@
+cd ~/Desktop/karma/karma/backend
+
+rm -rf .venv                      # throw away the interrupted, pip-less venv
+python3 -m venv .venv             # let it run to completion — no Ctrl+C
+source .venv/bin/activate
+
+which pip                          # sanity: should print .../.venv/bin/pip
+pip install -r requirements.txt    # installs INTO the venv, bypasses PEP 668
+
+python seed.py
+PYTHONPATH=. python -m uvicorn app.main:app --port 8000

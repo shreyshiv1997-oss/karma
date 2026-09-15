@@ -1,0 +1,20 @@
+# Coverage must know about greenlets, or it silently under-reports.
+#
+# SQLAlchemy's async driver bridges sync and async by switching greenlets on every `await`.
+# coverage.py's C tracer does not follow those switches, so without this setting every line
+# after an `await` is recorded as never executed. Measured on this codebase, that put
+# `app/routers/gigs.py` at 32.5% when the journey test actually covers 88.6% of it -- and the
+# number was byte-identical whether one test file or all nine were run, which is how it was
+# caught.
+[run]
+concurrency = greenlet,thread
+source = app, etl
+omit =
+    */tests/*
+    */__init__.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    raise NotImplementedError
+    if __name__ == .__main__.:
