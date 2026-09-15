@@ -221,6 +221,89 @@ async def test_authorization_is_required_and_one_intent_is_resumed(
     assert permitted.status_code == 200, permitted.text
 
 
+async def test_a_cancelled_authorization_is_replaced_not_replayed(client, session_factory):
+    """★ A provider-cancelled intent is terminal; /intent used to serve it forever.
+
+    The gig was then stranded: /release captures nothing canceled, /intent kept handing
+    back the same dead intent, and the customer had no path forward short of cancelling
+    the job. Re-securing must mint a *replacement* and re-key the one payment row.
+    """
+    customer, worker, gig_id, gig = await _assigned_gig(client, session_factory)
+    first = await _authorize(client, customer, gig_id)
+
+    # The provider cancels the authorization (hold expiry, fraud tooling, a dashboard hand).
+    gateway = get_payment_gateway()
+    cancelled = await gateway.cancel_intent(
+        first["payment_intent_id"], idempotency_key="test:cancel:replacement"
+    )
+    assert cancelled.status == "canceled"
+
+    replaced = await client.post(
+        f"/api/v1/payments/gigs/{gig_id}/intent",
+        headers=auth(customer["token"]),
+    )
+    assert replaced.status_code == 200, replaced.text
+    body = replaced.json()
+    assert body["payment_intent_id"] != first["payment_intent_id"], "a fresh intent, not the corpse"
+    assert body["status"] == "authorized", "the replacement is payable in the simulator"
+    assert body["amount"] == first["amount"], "the money never changed, only the intent did"
+
+    # Resuming now returns the stable replacement -- not a new mint on every tap.
+    resumed = await _authorize(client, customer, gig_id)
+    assert resumed["payment_intent_id"] == body["payment_intent_id"]
+
+    # ...and still exactly one ledger of record for the gig: the row was re-keyed, not duplicated.
+    async with session_factory() as session:
+        assert (
+            await session.scalar(select(func.count()).select_from(GigPayment))
+        ) == 1
+
+    # Work may proceed against the replacement authorization.
+    en_route = await client.post(
+        f"/api/v1/gigs/{gig_id}/status",
+        headers=auth(worker["token"]),
+        json={"status": "en_route"},
+    )
+    assert en_route.status_code == 200, en_route.text
+
+
+async def test_an_expired_authorization_mid_job_can_be_re_secured(client, session_factory):
+    """★ The long-job loop: hold expires while work is done; money must still move forward."""
+    customer, worker, gig_id, _gig = await _assigned_gig(client, session_factory)
+    first = await _authorize(client, customer, gig_id)
+    await _submit_completion(client, worker, gig_id)
+
+    # The card hold lapses in the gap between the work finishing and the customer approving.
+    gateway = get_payment_gateway()
+    await gateway.cancel_intent(
+        first["payment_intent_id"], idempotency_key="test:cancel:midjob"
+    )
+
+    # Release refuses, and says how to recover instead of hinting at a webhook miracle.
+    refused = await client.post(
+        f"/api/v1/payments/gigs/{gig_id}/release",
+        headers=auth(customer["token"]),
+    )
+    assert refused.status_code == 409
+    assert "secure the payment again" in refused.json()["detail"]
+
+    # Re-securing on finished work used to be a 409 too ("before work begins") -- the dead end.
+    reopened = await client.post(
+        f"/api/v1/payments/gigs/{gig_id}/intent",
+        headers=auth(customer["token"]),
+    )
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["payment_intent_id"] != first["payment_intent_id"]
+
+    # The replacement captures on release and the gig completes end to end.
+    released = await client.post(
+        f"/api/v1/payments/gigs/{gig_id}/release",
+        headers=auth(customer["token"]),
+    )
+    assert released.status_code == 200, released.text
+    assert released.json()["status"] == "paid"
+
+
 async def test_worker_proof_cannot_move_money_and_duplicate_release_is_exactly_once(
     client, session_factory
 ):

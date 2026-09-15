@@ -31,7 +31,7 @@ def _escape_like(term: str) -> str:
     return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def _to_out(post: Post, author: User | None) -> PostOut:
+def _to_out(post: Post, author: User | None, *, liked: bool = False) -> PostOut:
     out = PostOut.model_validate(post)
     if author is not None:
         out.author_name = author.display_name
@@ -39,10 +39,13 @@ def _to_out(post: Post, author: User | None) -> PostOut:
         out.author_avatar = author.avatar_url
         out.author_karma = author.karma
         out.author_tier = author.verification_tier
+    out.liked_by_me = liked
     return out
 
 
-async def _load(session, posts: list[Post]) -> list[PostOut]:
+async def _load(
+    session, posts: list[Post], viewer: User | None = None
+) -> list[PostOut]:
     if not posts:
         return []
     ids = {p.author_id for p in posts}
@@ -50,7 +53,21 @@ async def _load(session, posts: list[Post]) -> list[PostOut]:
         a.id: a
         for a in (await session.execute(select(User).where(User.id.in_(ids)))).scalars().all()
     }
-    return [_to_out(p, authors.get(p.author_id)) for p in posts]
+    # The viewer's likes are one batch query too, not one per card: liking is per-user state
+    # riding a per-post payload, and an N+1 here would grow exactly as fast as the feed does.
+    liked_ids: set[int] = set()
+    if viewer is not None:
+        liked_ids = set(
+            (
+                await session.execute(
+                    select(Like.post_id).where(
+                        Like.user_id == viewer.id,
+                        Like.post_id.in_({p.id for p in posts}),
+                    )
+                )
+            ).scalars().all()
+        )
+    return [_to_out(p, authors.get(p.author_id), liked=p.id in liked_ids) for p in posts]
 
 
 @router.get("/posts", response_model=list[PostOut])
@@ -95,7 +112,7 @@ async def list_posts(
     if before_id is not None:
         stmt = stmt.where(Post.id < before_id)
     posts = list((await session.execute(stmt)).scalars().all())
-    return await _load(session, posts)
+    return await _load(session, posts, viewer=user)
 
 
 @router.post("/posts", response_model=PostOut, status_code=201)
@@ -167,6 +184,9 @@ async def like_post(post_id: int, user: CurrentUser, session: SessionDep) -> Pos
                 .values(likes_count=Post.likes_count - 1)
             )
 
+    # The response must say which way the toggle landed: only the branch that actually
+    # inserted the row leaves the caller liking the post.
+    liked = False
     if existing is None:
         # The read above and the insert below are not one atomic act. Two taps a millisecond apart
         # both see no like, and `uq_like_once` rejects the second -- which used to reach the user as
@@ -181,18 +201,20 @@ async def like_post(post_id: int, user: CurrentUser, session: SessionDep) -> Pos
         except IntegrityError:
             await _unlike()
         else:
+            liked = True
             await session.execute(
                 update(Post)
                 .where(Post.id == post_id)
                 .values(likes_count=Post.likes_count + 1)
             )
     else:
+        liked = False
         await _unlike()
     await session.flush()
     await session.refresh(post)
 
     author = await session.get(User, post.author_id)
-    return _to_out(post, author)
+    return _to_out(post, author, liked=liked)
 
 
 @router.post("/posts/{post_id}/comment", response_model=Message, status_code=201)

@@ -249,6 +249,44 @@ async def test_a_like_toggles(client, session_factory):
     assert unliked.json()["likes_count"] == 0
 
 
+async def test_the_like_button_knows_which_way_it_landed(client, session_factory):
+    """★ `liked_by_me` is the contract the *tap* depends on.
+
+    The like endpoint toggles. A client told only the count cannot render the heart
+    truthfully: a card freshly loaded after an earlier like looked un-liked, and the
+    next tap unliked server-side while the UI drew a like. Every response that carries
+    a post now also says whether the *caller* likes it.
+    """
+    await add_category(session_factory)
+    author = await _poster(client, handle="priya")
+    post = (await client.post(
+        "/api/v1/feed/posts",
+        headers=auth(author["token"]),
+        json={"kind": "post", "body": "State of the heart", "media_urls": []},
+    )).json()
+    fan = await register_user(client, handle="fan")
+
+    # A brand-new post lists as not-liked for everyone, author included.
+    feed = await client.get("/api/v1/feed/posts", headers=auth(author["token"]))
+    assert feed.json()[0]["liked_by_me"] is False
+
+    liked = await client.post(f"/api/v1/feed/posts/{post['id']}/like", headers=auth(fan["token"]))
+    assert liked.json()["liked_by_me"] is True, "the tap response says which way it landed"
+
+    # And it survives the round trip: the fan's feed shows the heart; the author's does not.
+    fan_feed = await client.get("/api/v1/feed/posts", headers=auth(fan["token"]))
+    assert fan_feed.json()[0]["liked_by_me"] is True
+    author_feed = await client.get("/api/v1/feed/posts", headers=auth(author["token"]))
+    assert author_feed.json()[0]["liked_by_me"] is False
+    assert author_feed.json()[0]["likes_count"] == 1, "the count itself stays per-post global"
+
+    # Toggling back off is also honestly reported, immediately and on reload.
+    unliked = await client.post(f"/api/v1/feed/posts/{post['id']}/like", headers=auth(fan["token"]))
+    assert unliked.json()["liked_by_me"] is False
+    fan_feed = await client.get("/api/v1/feed/posts", headers=auth(fan["token"]))
+    assert fan_feed.json()[0]["liked_by_me"] is False
+
+
 async def test_likes_never_go_negative(client, session_factory):
     """★ Two different users unliking a post the counter has already zeroed."""
     await add_category(session_factory)

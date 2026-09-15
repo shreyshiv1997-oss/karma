@@ -99,7 +99,11 @@ async def create_or_resume_intent(
     gig = await _locked_gig(session, gig_id)
     if gig.customer_id != user.id:
         raise HTTPException(status_code=403, detail="Only the customer can secure payment")
-    if gig.worker_id is None or gig.status != "assigned":
+    # Escrow opens once a worker is chosen. `completion_pending` is admitted for one reason:
+    # a long job can outlive its card authorization (uncaptured holds expire at the provider),
+    # and refusing here would strand finished work unpaid -- the canceled-intent replacement
+    # below is then the only way money can move forward again.
+    if gig.worker_id is None or gig.status not in {"assigned", "completion_pending"}:
         raise HTTPException(
             status_code=409,
             detail="Payment is secured after assignment and before work begins",
@@ -110,9 +114,51 @@ async def create_or_resume_intent(
         try:
             intent = await gateway.retrieve_intent(payment.provider_payment_intent_id)
         except PaymentProviderError as exc:
+            # Some providers answer a terminal cancellation with the object, some with an
+            # error; both spell the same thing below.
+            if exc.code != "canceled":
+                raise _provider_failure(exc) from exc
+            intent = None
+        if intent is not None and intent.status != "canceled":
+            apply_provider_intent(payment, gig, intent)
+            await session.flush()
+            return payment_out(
+                payment,
+                client_secret=intent.client_secret,
+                publishable_key=gateway.publishable_key,
+            )
+
+        # A canceled intent is terminal. Returning its client_secret would hand the customer
+        # an object they can never confirm, on a gig no other endpoint could move: /release
+        # captures nothing canceled, and this route kept serving the same dead intent
+        # forever. Mint a replacement and re-key the row. The idempotency key names the
+        # corpse, so a request that crashed before the re-key committed recomputes this key
+        # on retry and the provider returns the replacement it already made.
+        try:
+            intent = await gateway.create_intent(
+                amount_minor=minor_from_money(payment.amount),
+                currency=payment.currency,
+                gig_id=gig.id,
+                customer_id=user.id,
+                worker_id=gig.worker_id,
+                receipt_email=user.email,
+                idempotency_key=f"karma:gig:{gig.id}:intent:replace:{payment.provider_payment_intent_id}",
+            )
+        except PaymentProviderError as exc:
             raise _provider_failure(exc) from exc
+        payment.provider_payment_intent_id = intent.id
+        payment.authorized_at = None  # the replacement holds no authorization yet
         apply_provider_intent(payment, gig, intent)
         await session.flush()
+        queue_event(
+            session,
+            Event.of(
+                "gig.payment_updated",
+                gig.id,
+                status=gig.status,
+                payment_status=gig.payment_status,
+            ),
+        )
         return payment_out(
             payment,
             client_secret=intent.client_secret,
@@ -239,7 +285,13 @@ async def release_payment(
         await session.flush()
         raise HTTPException(
             status_code=409,
-            detail="Stripe capture is still processing; the signed webhook will reconcile it",
+            detail=(
+                # Expired holds are the common case on long jobs; the way forward is the
+                # replacement intent POST /payments/gigs/{id}/intent now mints.
+                "The authorization was cancelled; secure the payment again to reopen it."
+                if intent.status == "canceled"
+                else "Stripe capture is still processing; the signed webhook will reconcile it"
+            ),
         )
     await settle_captured_payment(session, payment, gig)
     await session.flush()

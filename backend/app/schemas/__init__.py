@@ -331,6 +331,10 @@ class PostOut(ORMModel):
     likes_count: int = 0
     comments_count: int = 0
     created_at: datetime
+    # Was this post liked by the caller? Without it the like button is blind: it renders
+    # un-liked on every fresh load, and a tap toggles server-side, so the user who had
+    # liked a post before unlikes it by accident while the UI draws the opposite.
+    liked_by_me: bool = False
     # Denormalised for the feed so one query renders a card.
     author_name: str | None = None
     author_handle: str | None = None

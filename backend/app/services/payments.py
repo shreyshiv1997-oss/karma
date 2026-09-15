@@ -260,7 +260,12 @@ class SimulatedPaymentGateway:
         del customer_id, worker_id, receipt_email, idempotency_key
         existing_id = self._by_gig.get(gig_id)
         if existing_id is not None:
-            return self._intents[existing_id]
+            existing = self._intents[existing_id]
+            if existing.status != "canceled":
+                return existing
+            # A canceled intent is terminal at a real provider too: the escrow route asks
+            # here for its replacement, and future creates for the gig must return that
+            # replacement, not the corpse.
         intent_id = f"pi_sim_{gig_id}_{uuid4().hex}"
         result = ProviderIntent(
             id=intent_id,

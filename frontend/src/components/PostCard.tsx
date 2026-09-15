@@ -19,7 +19,7 @@ const inr = (value: number) =>
 
 export function PostCard({ post }: { post: Post }) {
   const [likes, setLikes] = useState(post.likes_count)
-  const [liked, setLiked] = useState(false)
+  const [liked, setLiked] = useState(post.liked_by_me)
   const [burst, setBurst] = useState(false)
   const [busy, setBusy] = useState(false)
 
@@ -36,7 +36,10 @@ export function PostCard({ post }: { post: Post }) {
     }
     try {
       const updated = await apiPost<Post>(`/feed/posts/${post.id}/like`, {})
+      // The server is the one that toggles; believe its count AND its direction, or a
+      // stale card (liked in another tab, say) inverts the tap's meaning.
       setLikes(updated.likes_count)
+      setLiked(updated.liked_by_me)
     } catch {
       setLiked(!next)
       setLikes((n) => Math.max(0, n + (next ? -1 : 1)))

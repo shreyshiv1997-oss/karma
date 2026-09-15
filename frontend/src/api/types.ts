@@ -170,6 +170,7 @@ export type Post = {
   likes_count: number
   comments_count: number
   created_at: string
+  liked_by_me: boolean
   author_name: string | null
   author_handle: string | null
   author_avatar: string | null

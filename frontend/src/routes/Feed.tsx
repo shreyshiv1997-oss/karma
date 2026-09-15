@@ -27,6 +27,7 @@ export function Feed() {
   useEffect(() => {
     let cancelled = false
     setPosts(null)
+    setError(null) // a refetch is a retry: drop the last failure's banner with it
     const params = new URLSearchParams({ limit: '30' })
     if (filter === 'proof') params.set('kind', 'proof')
     if (search) params.set('q', search)
