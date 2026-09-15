@@ -127,6 +127,91 @@ async def test_the_feed_can_be_filtered_by_kind(client, session_factory):
     assert bad.status_code == 422, "the kind filter is constrained by a pattern"
 
 
+# ── search ────────────────────────────────────────────────────────────────────
+
+
+async def _seed_searchable_posts(client) -> dict:
+    """Two authors, three posts with distinct text for the search tests to slice."""
+    priya = await _poster(client)  # display_name "Priya"
+    ravi = await _poster(client, handle="ravi")
+    for author, body in (
+        (priya, "Fixed three fans today. #electrical #indore"),
+        (ravi, "Replaced a burnt-out distribution board #plumbing"),
+        (ravi, "100% genuine parts, guaranteed"),
+    ):
+        r = await client.post(
+            "/api/v1/feed/posts",
+            headers=auth(author["token"]),
+            json={"kind": "post", "body": body, "media_urls": []},
+        )
+        assert r.status_code == 201, r.text
+    return {"priya": priya, "ravi": ravi}
+
+
+async def test_the_feed_can_be_searched_by_text_and_hashtag(client, session_factory):
+    await add_category(session_factory)
+    users = await _seed_searchable_posts(client)
+    headers = auth(users["priya"]["token"])
+
+    fans = await client.get("/api/v1/feed/posts", params={"q": "fans"}, headers=headers)
+    assert [p["author_handle"] for p in fans.json()] == ["priya"]
+
+    # Hashtags are harvested from the body, so a tag search is a body search -- with or
+    # without the '#'.
+    for needle in ("plumbing", "#indore"):
+        by_tag = await client.get("/api/v1/feed/posts", params={"q": needle}, headers=headers)
+        assert len(by_tag.json()) == 1
+        assert needle.lstrip("#") in by_tag.json()[0]["body"].lower() + " " + " ".join(by_tag.json()[0]["hashtags"]).lower()
+
+    nothing = await client.get("/api/v1/feed/posts", params={"q": "carpentry"}, headers=headers)
+    assert nothing.status_code == 200
+    assert nothing.json() == []
+
+
+async def test_feed_search_is_case_insensitive_and_matches_authors(client, session_factory):
+    await add_category(session_factory)
+    users = await _seed_searchable_posts(client)
+    headers = auth(users["priya"]["token"])
+
+    upper = await client.get("/api/v1/feed/posts", params={"q": "FANS"}, headers=headers)
+    assert [p["author_handle"] for p in upper.json()] == ["priya"]
+
+    by_author = await client.get("/api/v1/feed/posts", params={"q": "ravi"}, headers=headers)
+    assert len(by_author.json()) == 2, "both of ravi's posts match his handle"
+
+    by_name = await client.get("/api/v1/feed/posts", params={"q": "Priya"}, headers=headers)
+    assert [p["author_handle"] for p in by_name.json()] == ["priya"], "display_name is searched too"
+
+
+async def test_feed_search_escapes_like_wildcards(client, session_factory):
+    """A bare '%' must mean a literal percent sign, not 'match everything'."""
+    await add_category(session_factory)
+    users = await _seed_searchable_posts(client)
+    headers = auth(users["priya"]["token"])
+
+    percent = await client.get("/api/v1/feed/posts", params={"q": "%"}, headers=headers)
+    assert [p["body"] for p in percent.json()] == ["100% genuine parts, guaranteed"]
+
+
+async def test_feed_search_combines_with_the_kind_filter(client, session_factory):
+    await add_category(session_factory)
+    user = await _poster(client)
+    for kind, body in (("post", "Available for plumbing"), ("pulse", "plumbing apprentice wanted")):
+        r = await client.post(
+            "/api/v1/feed/posts",
+            headers=auth(user["token"]),
+            json={"kind": kind, "body": body, "media_urls": []},
+        )
+        assert r.status_code == 201
+
+    pulses = await client.get(
+        "/api/v1/feed/posts",
+        params={"q": "plumbing", "kind": "pulse"},
+        headers=auth(user["token"]),
+    )
+    assert [p["kind"] for p in pulses.json()] == ["pulse"]
+
+
 async def test_the_feed_requires_authentication(client, session_factory):
     await add_category(session_factory)
     assert (await client.get("/api/v1/feed/posts")).status_code == 401

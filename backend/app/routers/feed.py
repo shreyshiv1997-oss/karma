@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.core.deps import CurrentUser, SessionDep
@@ -23,6 +23,12 @@ from app.schemas import Message, PostCreate, PostOut
 router = APIRouter(prefix="/feed", tags=["Feed"])
 
 _HASHTAG = re.compile(r"#([\w\u0900-\u097F]{1,40})")
+
+
+def _escape_like(term: str) -> str:
+    """Make a user substring safe for LIKE. ``%`` and ``_`` are wildcards, and the escape
+    character itself must be escaped first or it escapes the escapes."""
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _to_out(post: Post, author: User | None) -> PostOut:
@@ -52,6 +58,12 @@ async def list_posts(
     session: SessionDep,
     user: CurrentUser,
     kind: str | None = Query(default=None, pattern="^(post|reel|pulse|proof)$"),
+    q: str | None = Query(
+        default=None,
+        max_length=80,
+        description="Case-insensitive substring search over post text, proof category, and "
+        "author name/handle. Hashtags live in the body, so `tag` and `#tag` both find them.",
+    ),
     limit: int = Query(default=20, ge=1, le=50),
     before_id: int | None = Query(
         default=None,
@@ -67,6 +79,19 @@ async def list_posts(
     stmt = select(Post).order_by(Post.created_at.desc(), Post.id.desc()).limit(limit)
     if kind:
         stmt = stmt.where(Post.kind == kind)
+    needle = (q or "").strip()
+    if needle:
+        # The author columns live on `users`, so searching them needs the join; selecting
+        # only Post entities keeps the response shape (and _load's author batch) unchanged.
+        pattern = f"%{_escape_like(needle)}%"
+        stmt = stmt.join(User, Post.author_id == User.id).where(
+            or_(
+                Post.body.ilike(pattern, escape="\\"),
+                Post.category_name.ilike(pattern, escape="\\"),
+                User.display_name.ilike(pattern, escape="\\"),
+                User.handle.ilike(pattern, escape="\\"),
+            )
+        )
     if before_id is not None:
         stmt = stmt.where(Post.id < before_id)
     posts = list((await session.execute(stmt)).scalars().all())
