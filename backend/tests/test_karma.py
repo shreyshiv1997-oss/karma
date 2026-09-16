@@ -184,3 +184,60 @@ def test_bands_from_manifesto():
     assert KarmaSnapshot(75, 75, 75).band() == "trusted"
     assert KarmaSnapshot(50, 50, 50).band() == "building"
     assert KarmaSnapshot(10, 10, 10).band() == "dormant"
+
+
+@pytest.mark.asyncio
+async def test_recompute_agrees_with_a_python_row_sum_over_every_domain(db, user):
+    """The database conditional aggregation must be exactly the old row loop.
+
+    `recompute` no longer fetches the rows into Python, so pin the arithmetic with an
+    independent Python sum over a seeded, unseeded-random mix of all four domains and
+    wildly varying (including negative and clamping) deltas.
+    """
+    import random
+
+    from app.services.karma import _clamp, _neutral
+
+    random.seed(20260916)
+    deltas_by_domain: dict[str, int] = {}
+    for i in range(120):
+        domain = random.choice(
+            [
+                KarmaDomain.WORK,
+                KarmaDomain.SOCIAL,
+                KarmaDomain.TRUST,
+                KarmaDomain.MIGRATION,
+            ]
+        ).value
+        delta = random.randint(-30, 35)
+        db.add(
+            KarmaEvent(
+                user_id=user.id,
+                event_type=KarmaEventType.STREAK_DAY.value,
+                domain=domain,
+                delta=delta,
+                reason="equivalence probe",
+                ref_type="test",
+                ref_id=i,
+            )
+        )
+        deltas_by_domain[domain] = deltas_by_domain.get(domain, 0) + delta
+    await db.flush()
+
+    snapshot = await KarmaLedger(db).recompute(user.id)
+
+    # The original algorithm, run here by hand over the raw rows:
+    neutral = _neutral()
+    trust_total = deltas_by_domain.get(KarmaDomain.TRUST.value, 0) + deltas_by_domain.get(
+        KarmaDomain.MIGRATION.value, 0
+    )
+    work_total = _clamp(neutral + deltas_by_domain.get(KarmaDomain.WORK.value, 0) + trust_total)
+    social_total = _clamp(
+        neutral + deltas_by_domain.get(KarmaDomain.SOCIAL.value, 0) + trust_total
+    )
+    blended = _clamp(int(round(0.6 * work_total + 0.4 * social_total)))
+    assert (snapshot.blended, snapshot.work, snapshot.social) == (
+        blended,
+        work_total,
+        social_total,
+    )

@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=14, ge=1, le=90)
     OTP_TTL_SECONDS: int = Field(default=300, ge=30, le=3600)
     OTP_LENGTH: int = Field(default=6, ge=4, le=8)
+    # The verification-attempt budget's window. Deliberately outlives the code's own TTL:
+    # a window that expired while a code was still live would hand an attacker a fresh
+    # set of guesses against a live code, and a window reset by `send` (as this used to
+    # be) let a resend trade one exhausted budget for a new one forever. Only a
+    # successful verification clears the counter.
+    OTP_ATTEMPT_WINDOW_SECONDS: int = Field(default=1800, ge=60, le=86_400)
     # Per-IP budgets. These are deliberately generous: behind carrier-grade NAT a whole
     # apartment block shares one address, so a tight per-IP limit locks out legitimate
     # neighbours. Production should pair these with a challenge (captcha / proof-of-work)

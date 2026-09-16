@@ -163,8 +163,12 @@ async def register_device(
     user: ChatUser,
     session: SessionDep,
 ) -> BitchatDeviceOut:
-    """Register public identity material and replenish signed one-time prekeys."""
-    await purge_expired(session)
+    """Register public identity material and replenish signed one-time prekeys.
+
+    No per-request expiry purge here: the background sweep (``cleanup_forever``, every
+    30 s) is the expiry authority, and a full-table DELETE on every device write was
+    pure lock churn in the write path.
+    """
     device_id = str(payload.device_id)
     device = await session.get(BitchatDevice, device_id, with_for_update=True)
     if device is None:
@@ -268,7 +272,6 @@ async def get_session(
     user: ChatUser,
     session: SessionDep,
 ) -> BitchatSessionOut:
-    await purge_expired(session)
     gig = await _gig_for(session, gig_id, user)
     conversation = await session.get(BitchatConversation, gig.id)
     if conversation is None:
@@ -339,7 +342,6 @@ async def claim_prekey(
     session: SessionDep,
 ) -> BitchatClaimedPreKey:
     """Atomically reserve one peer prekey for the caller's device."""
-    await purge_expired(session)
     gig = await _gig_for(session, gig_id, user)
     if gig.status not in _SENDABLE_GIG_STATES:
         raise HTTPException(status_code=409, detail="This conversation is read-only")
@@ -390,7 +392,6 @@ async def send_message(
     session: SessionDep,
 ) -> BitchatEnvelopeOut:
     """Relay a signed ciphertext envelope after consuming its reserved prekey."""
-    await purge_expired(session)
     gig = await _gig_for(session, gig_id, user)
     if gig.status not in _SENDABLE_GIG_STATES:
         raise HTTPException(status_code=409, detail="This conversation is read-only")

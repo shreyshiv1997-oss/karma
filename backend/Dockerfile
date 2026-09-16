@@ -43,7 +43,15 @@ USER karma
 
 EXPOSE 8000
 
-# `--proxy-headers` because the API sits behind the web container's reverse proxy; without it
-# every request appears to come from the proxy and the rate limiter keys on one address.
+# The web container's reverse proxy appends each client's real address to
+# X-Forwarded-For, and the application resolves that header itself: TRUSTED_PROXY_HOPS
+# (set in docker-compose.yml) tells it exactly how many trusted hops to read through,
+# so entries further left -- attacker-controlled -- are never used as a budget key.
+#
+# Do NOT re-add uvicorn's `--proxy-headers` here. With `--forwarded-allow-ips *` it
+# rewrites request.client to the *leftmost* XFF entry before the application ever
+# sees it; combined with TRUSTED_PROXY_HOPS=0 that made every per-IP budget
+# (OTP send, register, login spray, the global limiter) key on an address the
+# caller chose per request, which rotated and defeated the limit entirely.
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

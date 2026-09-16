@@ -95,6 +95,11 @@ def main() -> None:
         and "no-new-privileges:true" in api.get("security_opt", [])
         and "/tmp" in api.get("tmpfs", []),
     )
+    check(
+        "api trusts exactly one proxy hop (the web container) when resolving X-Forwarded-For",
+        str(api.get("environment", {}).get("TRUSTED_PROXY_HOPS")) == "1",
+        f"TRUSTED_PROXY_HOPS={api.get('environment', {}).get('TRUSTED_PROXY_HOPS')!r}",
+    )
     found_vars = set(re.findall(r"\$\{([A-Z0-9_]+):\?", raw))
     check(
         "every required variable is declared with :? (fail-fast), no undeclared extras",
@@ -121,6 +126,24 @@ def main() -> None:
     entrypoint = BACKEND / "docker-entrypoint.sh"
     probe = subprocess.run(["sh", "-n", str(entrypoint)], capture_output=True, text=True)
     check("entrypoint passes sh -n", probe.returncode == 0, probe.stderr.strip()[:120])
+
+    # uvicorn's `--proxy-headers` (with a permissive `--forwarded-allow-ips`) rewrites
+    # request.client to the *leftmost*, attacker-controlled XFF entry. The application's
+    # hop-aware resolver (TRUSTED_PROXY_HOPS) is the only layer allowed to read that
+    # header: letting the server rewrite the client address first would key every
+    # per-IP budget on a value the caller chose per request. The check inspects the
+    # CMD instruction itself, so a comment mentioning the flag does not trip it.
+    cmd_lines = [
+        line.strip()
+        for line in (BACKEND / "Dockerfile").read_text().splitlines()
+        if line.strip().startswith(("CMD", "ENTRYPOINT"))
+    ]
+    cmd_text = " ".join(cmd_lines)
+    check(
+        "backend CMD does not let uvicorn rewrite the client address from X-Forwarded-For",
+        "--proxy-headers" not in cmd_text and "--forwarded-allow-ips" not in cmd_text,
+        cmd_text[:120],
+    )
 
     heads = subprocess.run(
         [sys.executable, "-m", "alembic", "heads"],

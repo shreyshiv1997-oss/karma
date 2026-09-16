@@ -23,11 +23,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.db import Base
-from app.core.security import hash_password, password_needs_rehash
 from app.models.marketplace import Gig, ServiceCategory, WorkerProfile
 from app.models.social import Post, PostKind
 from app.models.trust import Review
@@ -53,6 +51,10 @@ class Report:
     gigs_imported: int = 0
     reviews_imported: int = 0
     karma_events_written: int = 0
+    # Counted at the login path, not here: the ETL cannot rehash without the
+    # plaintext, so legacy bcrypt hashes are carried over and upgraded
+    # transparently on the next successful sign-in (see app/core/security.py).
+    # Kept in the report so the operator can see where that upgrade will land.
     passwords_rehashed: int = 0
     unresolved_foreign_keys: int = 0
     review_queue: list[dict] = field(default_factory=list)
@@ -199,11 +201,9 @@ class ETL:
         )
 
         handle = resolution.new_handle or _norm_handle(identity.handle) or _derive_handle(identity)
+        # Legacy bcrypt hashes are carried over verbatim; they cannot be rehashed
+        # without the plaintext and the login path upgrades them transparently.
         password_hash = identity.password_hash
-        if password_hash and password_needs_rehash(password_hash):
-            # Cannot rehash without the plaintext; keep the bcrypt hash and let the login
-            # path upgrade it transparently on next successful sign-in.
-            self.report.passwords_rehashed += 0  # counted at login, not here
 
         user = User(
             handle=handle,

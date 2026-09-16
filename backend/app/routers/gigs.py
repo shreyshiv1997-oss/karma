@@ -471,9 +471,19 @@ async def _complete_gig(
     category = await session.get(ServiceCategory, gig.category_id)
     total = float(gig.total)
 
-    # (1) marketplace stats
+    # (1) marketplace stats -- in one statement, for the same reason the wallet and the
+    # counters above are: a read-modify-write here races a second completion of the same
+    # worker. The two completions lock *different* gig rows, so nothing serialises them;
+    # on a real engine both read the old count and the slower write discards the faster
+    # one, silently dropping a job from the public stat and from the ranker's experience
+    # signal -- exactly the class of bug `_credit_wallet` and `review_gig` already fixed.
     if profile is not None:
-        profile.total_jobs = (profile.total_jobs or 0) + 1
+        await session.execute(
+            update(WorkerProfile)
+            .where(WorkerProfile.user_id == gig.worker_id)
+            .values(total_jobs=WorkerProfile.total_jobs + 1)
+        )
+        await session.refresh(profile)
 
     # (2) money: payout minus platform fee, in one append-only ledger
     split = split_payout(total, settings.PLATFORM_FEE_RATE)

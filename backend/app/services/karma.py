@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -228,27 +228,45 @@ class KarmaLedger:
             await self.session.flush()
 
     async def recompute(self, user_id: int) -> KarmaSnapshot:
-        """Rebuild karma from the ledger. Idempotent by construction."""
-        rows = (
+        """Rebuild karma from the ledger. Idempotent by construction.
+
+        The per-domain sums run inside the database as one conditional aggregation,
+        so a long ledger costs a single indexed pass instead of fetching every row
+        into Python. The arithmetic below is exactly what the old row loop did:
+        work/social keep their own deltas, and everything else (trust, migration)
+        counts toward both halves.
+        """
+        delta = KarmaEvent.delta
+        work_sum = func.coalesce(
+            func.sum(case((KarmaEvent.domain == KarmaDomain.WORK.value, delta), else_=0)), 0
+        )
+        social_sum = func.coalesce(
+            func.sum(case((KarmaEvent.domain == KarmaDomain.SOCIAL.value, delta), else_=0)), 0
+        )
+        trust_sum = func.coalesce(
+            func.sum(
+                case(
+                    (
+                        KarmaEvent.domain.not_in(
+                            [KarmaDomain.WORK.value, KarmaDomain.SOCIAL.value]
+                        ),
+                        delta,
+                    ),
+                    else_=0,
+                )
+            ),
+            0,
+        )
+        work, social, trust_total = (
             await self.session.execute(
-                select(KarmaEvent.domain, KarmaEvent.delta).where(KarmaEvent.user_id == user_id)
+                select(work_sum, social_sum, trust_sum).where(KarmaEvent.user_id == user_id)
             )
-        ).all()
+        ).one()
 
-        work = _neutral()
-        social = _neutral()
-        trust_total = 0
-
-        for domain, delta in rows:
-            if domain == KarmaDomain.WORK.value:
-                work += delta
-            elif domain == KarmaDomain.SOCIAL.value:
-                social += delta
-            else:  # TRUST and MIGRATION count toward both halves
-                trust_total += delta
-
-        work_total = _clamp(work + trust_total)
-        social_total = _clamp(social + trust_total)
+        # The ledger holds deltas from the neutral starting point; an empty ledger
+        # sums to zero and the user stands at neutral, exactly as before.
+        work_total = _clamp(_neutral() + int(work) + int(trust_total))
+        social_total = _clamp(_neutral() + int(social) + int(trust_total))
 
         # Blended: work is weighted higher than social, because trusting someone in your
         # home should depend more on their work record than on their popularity.

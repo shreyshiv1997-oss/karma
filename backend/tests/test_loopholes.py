@@ -1060,3 +1060,228 @@ def test_l12_malformed_json_is_rejected_not_silently_mangled(monkeypatch):
     monkeypatch.setenv("ALLOWED_ORIGINS", '["https://karma.app"')
     with pytest.raises(Exception):
         Settings(_env_file=None)
+
+
+# ==========================================================================
+# L-13  Concurrent gig completions must not lose a job from the worker's stats
+# ==========================================================================
+async def test_l13_concurrent_completions_do_not_lose_a_job(tmp_path):
+    """★ Two gigs for one worker completing at the same instant add two jobs, not one.
+
+    `_complete_gig` used to write `profile.total_jobs = (profile.total_jobs or 0) + 1`
+    in Python. The two completions lock *different* gig rows, so nothing serialises
+    them; on a real engine both read the old count and the slower write discards the
+    faster one -- one completed job vanishes from the public stat (and from the
+    ranker's experience signal) while the wallet and the ledger still show both
+    payouts. File-backed, for the same reason as test_l04: the shared in-memory
+    fixture is served by a single pooled connection, and no race can occur on it.
+    """
+    from sqlalchemy import select
+    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    from app.core.db import Base, session_scope
+    from app.models.marketplace import Gig, ServiceCategory, WorkerProfile
+    from app.models.user import KarmaEvent, KarmaEventType, User
+    from app.routers.gigs import _complete_gig
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'race_jobs.db'}")
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        async with factory() as s:
+            worker = User(
+                handle="jobracer", display_name="Job Racer",
+                email="jr@example.com", password_hash="x",
+            )
+            customer = User(
+                handle="jobcustomer", display_name="Job Customer",
+                email="jc@example.com", password_hash="x",
+            )
+            s.add_all([worker, customer])
+            await s.flush()
+            category = ServiceCategory(
+                name="Electrical", slug="electrical-l13", emoji="\u26a1",
+                description="Wiring", base_fare=Decimal("200"),
+                per_km_rate=Decimal("18"), per_hour_rate=Decimal("350"),
+            )
+            s.add(category)
+            await s.flush()
+            s.add(WorkerProfile(user_id=worker.id, category_id=category.id, total_jobs=5))
+            gigs = []
+            for i in range(2):
+                gig = Gig(
+                    customer_id=customer.id, worker_id=worker.id,
+                    category_id=category.id, title=f"Raced job {i}",
+                    status="completion_pending", payment_status="paid",
+                    lat=22.7196, lng=75.8577, total=Decimal("100.00"),
+                )
+                s.add(gig)
+                await s.flush()
+                gigs.append(gig)
+            await s.commit()
+            worker_id, gig_ids = worker.id, [g.id for g in gigs]
+
+        async def complete(gig_id: int) -> None:
+            # Retry only on SQLite's coarse whole-database write lock, which is an
+            # artefact of the dev driver, not of the invariant under test.
+            for _ in range(40):
+                try:
+                    async with factory() as s:
+                        async for _ in session_scope(s):
+                            gig = await s.scalar(
+                                select(Gig).where(Gig.id == gig_id).with_for_update()
+                            )
+                            await _complete_gig(
+                                gig, [], s, payment_reference=f"sim_l13_{gig_id}"
+                            )
+                    return
+                except OperationalError as exc:
+                    if "locked" not in str(exc).lower():
+                        raise
+                    await asyncio.sleep(0.02)
+            raise AssertionError("could not acquire the sqlite write lock")
+
+        await asyncio.gather(*(complete(gig_id) for gig_id in gig_ids))
+
+        async with factory() as s:
+            profile = await s.get(WorkerProfile, worker_id)
+            assert profile.total_jobs == 7, (
+                f"lost update: two completions on 5 jobs must give 7, got {profile.total_jobs}"
+            )
+            # The ledger recorded both completions: the stat may not be the one number
+            # that quietly disagrees with the history it projects from.
+            from sqlalchemy import func
+
+            completed_rows = await s.scalar(
+                select(func.count())
+                .select_from(KarmaEvent)
+                .where(
+                    KarmaEvent.user_id == worker_id,
+                    KarmaEvent.event_type == KarmaEventType.GIG_COMPLETED.value,
+                )
+            )
+            assert completed_rows == 2, "both completions must be in the ledger"
+    finally:
+        await engine.dispose()
+
+
+def test_l13_the_total_jobs_increment_is_a_sql_expression_not_a_python_read():
+    """The structural guarantee behind the race test.
+
+    A future refactor could reintroduce `profile.total_jobs = profile.total_jobs + 1`
+    and, on a single-connection dev database, every concurrency test would still pass.
+    This asserts the increment is computed by the database inside the row lock.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from app.routers import gigs
+
+    def _body_without_docstring(func) -> str:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+        node = tree.body[0]
+        statements = node.body
+        if (
+            statements
+            and isinstance(statements[0], ast.Expr)
+            and isinstance(statements[0].value, ast.Constant)
+            and isinstance(statements[0].value.value, str)
+        ):
+            statements = statements[1:]
+        return "\n".join(ast.unparse(stmt) for stmt in statements)
+
+    source = _body_without_docstring(gigs._complete_gig)
+    assert "total_jobs=WorkerProfile.total_jobs + 1" in source
+    assert "profile.total_jobs =" not in source, "read-modify-write has returned"
+
+
+# ==========================================================================
+# L-14  The OTP attempt budget must survive a resend
+# ==========================================================================
+def test_l14_the_attempt_budget_outlives_the_code_ttl():
+    """A budget window shorter than the code's TTL lets the counter expire while the
+    code is still guessable -- the attacker then gets fresh guesses against a live
+    code. The window must be strictly longer, so the code dies first."""
+    from app.core.config import settings
+
+    assert settings.OTP_ATTEMPT_WINDOW_SECONDS > settings.OTP_TTL_SECONDS, (
+        "the attempt budget must outlive the code, not the other way round"
+    )
+
+
+async def test_l14_a_resend_does_not_reset_the_otp_attempt_budget():
+    """Requesting a new code must not hand the attacker a fresh set of guesses.
+
+    `send` used to delete the attempt counter alongside the old code, so an attacker
+    could trade one exhausted budget for a fresh one -- forever -- as long as the
+    send budget let them keep resending. The counter now persists across resends for
+    its own (longer) window.
+    """
+    from app.core.ports import MemoryCache
+    from app.services.otp import OtpService, RateLimited
+
+    cache = MemoryCache()
+    otp = OtpService(cache)
+    phone = "+9198000004242"
+
+    await otp.send(phone)
+    for _ in range(OtpService.MAX_ATTEMPTS):
+        assert await otp.verify(phone, "000000") is False
+
+    fresh = await otp.send(phone)  # the resend the attacker keeps making
+    with pytest.raises(RateLimited):
+        await otp.verify(phone, fresh)  # even the *right* code is locked out now
+
+
+async def test_l14_a_successful_verification_resets_the_attempt_budget():
+    """A legitimate verification clears the counter, so the next code starts clean --
+    the user who mistyped once is not punished forever."""
+    from app.core.ports import MemoryCache
+    from app.services.otp import OtpService, RateLimited
+
+    cache = MemoryCache()
+    otp = OtpService(cache)
+    phone = "+9198000004343"
+
+    code = await otp.send(phone)
+    for _ in range(OtpService.MAX_ATTEMPTS - 1):
+        assert await otp.verify(phone, "000000") is False
+    assert await otp.verify(phone, code) is True  # success clears the counter
+
+    second = await otp.send(phone)
+    for _ in range(OtpService.MAX_ATTEMPTS):
+        assert await otp.verify(phone, "000000") is False
+    with pytest.raises(RateLimited):
+        await otp.verify(phone, second)
+
+
+async def test_l14_locked_out_attempts_expire_after_the_window():
+    """The lockout is a window, not a ban: once the attempts have aged out, the user
+    can verify a new code again."""
+    from time import monotonic
+
+    from app.core.config import settings
+    from app.core.ports import MemoryCache
+    from app.services.otp import OtpService, RateLimited
+
+    cache = MemoryCache()
+    otp = OtpService(cache)
+    phone = "+9198000004444"
+
+    await otp.send(phone)
+    for _ in range(OtpService.MAX_ATTEMPTS):
+        assert await otp.verify(phone, "000000") is False
+    with pytest.raises(RateLimited):
+        await otp.verify(phone, "000000")
+
+    # Age the attempt list past the budget window: the user has waited it out.
+    key = OtpService.ATTEMPTS_KEY.format(phone=phone)
+    stale = monotonic() - settings.OTP_ATTEMPT_WINDOW_SECONDS - 10
+    cache._windows[key] = [stale] * OtpService.MAX_ATTEMPTS
+
+    code = await otp.send(phone)
+    assert await otp.verify(phone, code) is True

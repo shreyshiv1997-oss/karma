@@ -14,7 +14,6 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, Numeric, String, Text, func
-from sqlalchemy.dialects.sqlite import JSON as JSONType
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base

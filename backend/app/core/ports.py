@@ -253,7 +253,14 @@ class MemoryCache:
         self._values[key] = (value, None if ttl is None else time.monotonic() + ttl)
 
     async def delete(self, key: str) -> None:
+        # Window state lives in `_windows`, not `_values`. A delete that only touched
+        # `_values` would silently break the `CachePort.delete` contract for any key a
+        # limiter wrote: `incr_window`'s counter would survive, and this port would
+        # disagree with `RedisCache` (whose DEL removes the key however it was
+        # written) about what "deleted" means. That divergence is exactly how the OTP
+        # attempt budget behaved differently in dev and production.
         self._values.pop(key, None)
+        self._windows.pop(key, None)
 
     async def get_and_delete(self, key: str) -> str | None:
         """Atomic read-and-remove.
@@ -347,7 +354,36 @@ class RedisCache:
         return int(count)
 
 
+_cache_instance: CachePort | None = None
+
+
 def build_cache() -> CachePort:
+    """The process-wide cache: one instance per process, built once.
+
+    Every module that asks for a cache (the global rate limiter, OTP state, token
+    revocation, realtime tickets, upload and geocoding budgets) must share the *same*
+    store, or their budgets silently stop agreeing: separate ``MemoryCache`` dicts in
+    development let one module's ``delete`` miss another module's keys, and separate
+    ``redis.asyncio`` clients in production multiply the connection pools for no gain.
+
+    ``reset_build_cache()`` is the test hook: it forgets the memoised instance so the
+    next call rebuilds against other settings. Module-level caches bound at import time
+    keep their own reference, which is why test isolation clears *state on the shared
+    object* (``MemoryCache.reset``) rather than rebuilding it.
+    """
+    global _cache_instance
+    if _cache_instance is None:
+        _cache_instance = _build_cache()
+    return _cache_instance
+
+
+def reset_build_cache() -> None:
+    """Test hook: drop the memoised instance; the next ``build_cache`` re-reads settings."""
+    global _cache_instance
+    _cache_instance = None
+
+
+def _build_cache() -> CachePort:
     """Build the cache, failing closed in production.
 
     Silently degrading to ``MemoryCache`` when Redis is unreachable used to look like

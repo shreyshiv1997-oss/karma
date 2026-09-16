@@ -112,7 +112,7 @@ ok(f"proof post auto-published (newest id {newest_proof_before} -> {newest and n
 
 s, feed = call("GET", "/feed/posts", None, ct)
 newest = next(p for p in feed if p["gig_id"] == gid)
-ok(f"proof post is in the public feed", newest["kind"] == "proof")
+ok("proof post is in the public feed", newest["kind"] == "proof")
 P(f"     '{newest['body']}' by @{newest['author_handle']}  before={bool(newest['before_url'])} after={bool(newest['after_url'])} earned=Rs{newest['amount_earned']}")
 P(f"     trust travels with it: karma={newest['author_karma']} tier={newest['author_tier']}")
 

@@ -152,6 +152,22 @@ async def test_the_rate_limit_window_counts_within_and_resets_after():
     assert await cache.incr_window("rl", 60) == 3
 
 
+async def test_delete_clears_a_window_key_written_by_incr_window():
+    """`CachePort.delete` must mean the same thing for both ports.
+
+    `incr_window` keeps its state in `_windows`; a delete that only touched
+    `_values` let a limiter's counter survive its own `delete`, while `RedisCache`
+    (whose DEL removes the key however it was written) did not. That divergence is
+    how the OTP attempt budget reset in production but not in development.
+    """
+    cache = MemoryCache()
+    assert await cache.incr_window("rl", 60) == 1
+    assert await cache.incr_window("rl", 60) == 2
+
+    await cache.delete("rl")
+    assert await cache.incr_window("rl", 60) == 1, "the window must restart after delete"
+
+
 async def test_a_rate_limit_window_expires_old_hits():
     """A hit older than the window must stop counting."""
     cache = MemoryCache()
@@ -183,6 +199,35 @@ async def test_reset_clears_everything():
 
 
 # ── build_cache ───────────────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _fresh_build_cache_memo():
+    """Give every test in this file a clean build-cache memo.
+
+    The build-cache tests monkeypatch ``settings`` to exercise other branches; without
+    a reset, the memoised instance from import time (or an earlier test's patched
+    settings) would answer instead of a fresh build, and the tests would pass while
+    checking nothing.
+    """
+    from app.core import ports
+
+    ports.reset_build_cache()
+    yield
+    ports.reset_build_cache()
+
+
+async def test_build_cache_is_one_instance_for_the_whole_process():
+    """Two modules asking for a cache get the same store, not two parallel ones."""
+    from app.core import ports
+
+    first = ports.build_cache()
+    second = ports.build_cache()
+    assert first is second
+
+    ports.reset_build_cache()
+    rebuilt = ports.build_cache()
+    assert rebuilt is not first, "reset must force a rebuild against current settings"
 
 
 async def test_build_cache_falls_back_to_memory_without_redis(monkeypatch):
